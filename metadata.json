@@ -1,0 +1,8 @@
+{
+  "name": "ECN Manager",
+  "description": "A web application to manage Engineering Change Notices (ECN) by synchronizing directly with SAP GUI via PowerShell automation or importing SAP files, tracking statuses, and viewing detailed component changes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
