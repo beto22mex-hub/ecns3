@@ -3945,39 +3945,33 @@ pause
 
     // --- 7. SAP CS15 Where-Used Automation (Assemblies starting with 'A' -> Max Level -> SKU) ---
     async function getTargetAssembliesForCs15(): Promise<string[]> {
-        try {
-            const result = await db.pool.request().query(`
-                SELECT DISTINCT assembly 
-                FROM component_changes 
-                WHERE assembly LIKE 'A%' AND assembly IS NOT NULL AND LTRIM(RTRIM(assembly)) <> ''
-            `);
-            return result.recordset.map((r: any) => String(r.assembly).trim()).filter(Boolean);
-        } catch (e) {
-            const mem = db.getMemoryStore();
-            const set = new Set<string>();
-            for (const c of mem.component_changes) {
-                if (c.assembly && c.assembly.toUpperCase().startsWith('A')) {
-                    set.add(c.assembly.trim());
-                }
-            }
-            return Array.from(set);
-        }
+        const result = await db.pool.request().query(`
+            SELECT DISTINCT LTRIM(RTRIM(assembly)) AS assembly
+            FROM component_changes
+            WHERE LTRIM(RTRIM(assembly)) LIKE 'A%'
+            ORDER BY assembly
+        `);
+        return result.recordset.map(row => String(row.assembly));
     }
 
     function generateCs15VbsScript(assemblies: string[], apiUrl: string): string {
-        const jsonEscapedList = assemblies.map(a => `"${a}"`).join(', ');
+        const assemblyListCode = assemblies.length
+            ? [`ReDim assemblyList(${assemblies.length - 1})`, ...assemblies.map((assembly, index) =>
+                `assemblyList(${index}) = "${assembly.replace(/"/g, '""')}"`)].join('\n')
+            : 'WScript.Echo "No hay ensambles para procesar."\nWScript.Quit 0';
         return `'=============================================================================
 ' HONEYWELL ECN MANAGER - AUTOMATIZACION TRANSACCION CS15 (WHERE-USED)
 ' Ensambles que inician con 'A' -> Extraccion nivel maximo (Nv.) -> SKU
 '=============================================================================
 On Error Resume Next
 
-Dim SapGuiAuto, appObj, connObj, sessionObj, wshShell, httpObj
-Dim assemblyList, currentAssembly, i, rowCount, r, grid
-Dim currMat, currLvl, maxLvl, bestSku, totalUpdated, updatePayload
+Dim SapGuiAuto, appObj, connObj, sessionObj, httpObj
+Dim assemblyList(), currentAssembly
+Dim maxLvl, bestSku, totalUpdated, totalErrors, updatePayload
 
-Set wshShell = CreateObject("WScript.Shell")
+
 totalUpdated = 0
+totalErrors = 0
 updatePayload = "["
 
 Set SapGuiAuto = GetObject("SAPGUI")
@@ -4007,25 +4001,56 @@ End If
 
 WScript.Echo "Conectado a SAP GUI. Iniciando transaccion CS15..."
 
-sessionObj.findById("wnd[0]/tbar[0]/btn[3]").press
-sessionObj.findById("wnd[0]/tbar[0]/btn[3]").press
-sessionObj.findById("wnd[0]").maximize
+${assemblyListCode}
 
-assemblyList = Array(${jsonEscapedList})
+For Each currentAssembly In assemblyList
+    bestSku = ""
+    Err.Clear
+    ExtractSku currentAssembly, bestSku, maxLvl
+    If Err.Number <> 0 Then
+        totalErrors = totalErrors + 1
+        WScript.Echo "CS15_ERROR:" & currentAssembly & " " & Err.Description
+    ElseIf bestSku <> "" Then
+        WScript.Echo "CS15_OK:" & currentAssembly & ":::" & bestSku & ":::Nivel:" & CStr(maxLvl)
+        If totalUpdated > 0 Then updatePayload = updatePayload & ","
+        updatePayload = updatePayload & "{""assembly"":" & JsonString(currentAssembly) & ",""sku"":" & JsonString(bestSku) & "}"
+        totalUpdated = totalUpdated + 1
+    Else
+        WScript.Echo "CS15_EMPTY:" & currentAssembly
+    End If
+Next
 
-For i = LBound(assemblyList) To UBound(assemblyList)
-    currentAssembly = Trim(assemblyList(i))
-    
-    If currentAssembly <> "" Then
+If totalUpdated > 0 And "${apiUrl.replace(/"/g, '""')}" <> "" Then
+    On Error GoTo 0
+    Set httpObj = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    httpObj.Open "POST", "${apiUrl.replace(/"/g, '""')}", False
+    httpObj.setRequestHeader "Content-Type", "application/json"
+    httpObj.Send "{""updates"":" & updatePayload & "]}"
+    If httpObj.Status <> 200 Then
+        WScript.Echo "RESULT_ERR:No se guardaron los SKU. HTTP " & httpObj.Status
+        WScript.Quit 1
+    End If
+End If
+WScript.Echo "CS15: encontrados " & totalUpdated & ", errores " & totalErrors
+If totalErrors > 0 Then WScript.Quit 2
+
+Function JsonString(value)
+    value = Replace(value, Chr(92), Chr(92) & Chr(92))
+    value = Replace(value, Chr(34), Chr(92) & Chr(34))
+    JsonString = Chr(34) & value & Chr(34)
+End Function
+
+Sub ExtractSku(material, ByRef sku, ByRef maxLevel)
+    Dim grid, rowCount, r, currMat, currLvl, levelText, column, levelColumn, materialColumn
         ' 1. Entrar a CS15
         sessionObj.findById("wnd[0]/tbar[0]/okcd").Text = "/nCS15"
         sessionObj.findById("wnd[0]").SendVKey 0
         
         ' 2. Pantalla inicial (Imagen 1)
-        sessionObj.findById("wnd[0]/usr/ctxtRC29N-IDNRK").Text = currentAssembly
+        sessionObj.findById("wnd[0]/usr/ctxtRC29N-IDNRK").Text = material
         sessionObj.findById("wnd[0]/usr/chkRC29N-DIREKT").Selected = True
         sessionObj.findById("wnd[0]/usr/chkRC29N-MATUV").Selected = True
-        sessionObj.findById("wnd[0]/usr/ctxtRC29N-DATBI").Text = "31.12.9999"
+        sessionObj.findById("wnd[0]/usr/ctxtRC29N-DATBI").Text = "31.12.2099"
         sessionObj.findById("wnd[0]/tbar[0]/btn[8]").press
         
         ' 3. Pantalla de vista (Imagen 2)
@@ -4035,71 +4060,58 @@ For i = LBound(assemblyList) To UBound(assemblyList)
         sessionObj.findById("wnd[0]/usr/chkRC29N-STFLG").Selected = True
         sessionObj.findById("wnd[0]/tbar[0]/btn[8]").press
         
-        ' 4. Resultado (Imagen 3) - Buscar mayor Nv.
-        maxLvl = -1
-        bestSku = ""
-        
-        Set grid = sessionObj.findById("wnd[0]/usr/cntlGRID1/shell")
-        If grid Is Nothing Then
-            Set grid = sessionObj.findById("wnd[0]/usr/cntlCC_CONTAINER/shell")
-        End If
-        
-        If Not (grid Is Nothing) Then
-            rowCount = grid.RowCount
-            For r = 0 To rowCount - 1
-                currMat = Trim(CStr(grid.GetCellValue(r, "IDNRK")))
-                If currMat = "" Then currMat = Trim(CStr(grid.GetCellValue(r, "MATNR")))
-                
-                currLvl = -1
-                Err.Clear
-                currLvl = CInt(Trim(CStr(grid.GetCellValue(r, "STUFE"))))
-                If Err.Number <> 0 Then
-                    Err.Clear
-                    currLvl = CInt(Trim(CStr(grid.GetCellValue(r, "LEVEL"))))
-                End If
-                If Err.Number <> 0 Then
-                    Err.Clear
-                    currLvl = CInt(Trim(CStr(grid.GetCellValue(r, "NV"))))
-                End If
-                On Error Resume Next
-                
-                If currLvl > maxLvl And currMat <> "" Then
-                    maxLvl = currLvl
-                    bestSku = currMat
-                End If
-            Next
-        End If
-        
-        ' Volver al inicio para siguiente ensamble
-        sessionObj.findById("wnd[0]/tbar[0]/btn[3]").press
-        sessionObj.findById("wnd[0]/tbar[0]/btn[3]").press
-        
-        If bestSku <> "" Then
-            WScript.Echo "CS15_OK:" & currentAssembly & ":::" & bestSku & ":::Nivel:" & CStr(maxLvl)
-            If totalUpdated > 0 Then updatePayload = updatePayload & ","
-            updatePayload = updatePayload & "{""assembly"":""" & currentAssembly & """,""sku"":""" & bestSku & """}"
-            totalUpdated = totalUpdated + 1
-        Else
-            WScript.Echo "CS15_EMPTY:" & currentAssembly
-        End If
-    End If
-Next
+    Set grid = FindGrid(sessionObj.findById("wnd[0]/usr"))
+    If grid Is Nothing Then Err.Raise 1001, "CS15", "Sin grilla ALV. " & sessionObj.findById("wnd[0]/sbar").Text
 
-updatePayload = updatePayload & "]"
-WScript.Echo "RESULT_OK:FINISHED_CS15_COUNT:" & CStr(totalUpdated)
+    rowCount = grid.RowCount
+    If rowCount = 0 Then Exit Sub
+    For Each column In grid.ColumnOrder
+        Select Case UCase(column)
+            Case "STUFE": levelColumn = column
+            Case "MATNR": materialColumn = column
+        End Select
+    Next
+    If IsEmpty(levelColumn) Or IsEmpty(materialColumn) Then
+        Err.Raise 1002, "CS15", "Se requieren las columnas STUFE y MATNR en el ALV."
+    End If
 
-If totalUpdated > 0 And "${apiUrl}" <> "" Then
-    Err.Clear
-    Set httpObj = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-    If Err.Number <> 0 Then
-        Set httpObj = CreateObject("MSXML2.XMLHTTP")
+    maxLevel = -1
+    For r = 0 To rowCount - 1
+        If r < grid.FirstVisibleRow Or r >= grid.FirstVisibleRow + grid.VisibleRowCount Then grid.FirstVisibleRow = r
+        levelText = Trim(CStr(grid.GetCellValue(r, levelColumn)))
+        currMat = Trim(CStr(grid.GetCellValue(r, materialColumn)))
+        If levelText <> "" And currMat <> "" Then
+            currLvl = CLng(levelText)
+            If currLvl > maxLevel Then
+                maxLevel = currLvl
+                sku = currMat
+            End If
+        End If
+    Next
+End Sub
+
+Function FindGrid(control)
+    Dim child, found
+    Set FindGrid = Nothing
+    If control.Type = "GuiGridView" Then
+        Set FindGrid = control
+        Exit Function
     End If
-    If Not (httpObj Is Nothing) Then
-        httpObj.Open "POST", "${apiUrl}", False
-        httpObj.setRequestHeader "Content-Type", "application/json"
-        httpObj.Send "{""updates"":" & updatePayload & "}"
+    If control.Type = "GuiShell" Then
+        If control.SubType = "GridView" Then
+            Set FindGrid = control
+            Exit Function
+        End If
     End If
-End If
+    If Not control.ContainerType Then Exit Function
+    For Each child In control.Children
+        Set found = FindGrid(child)
+        If Not found Is Nothing Then
+            Set FindGrid = found
+            Exit Function
+        End If
+    Next
+End Function
 `;
     }
 
@@ -4115,9 +4127,7 @@ End If
         }
 
         const tempScriptPath = path.join(os.tmpdir(), `sap_cs15_${Date.now()}.vbs`);
-        const host = 'localhost:3000';
-        const apiUrl = `http://${host}/api/sap/update-cs15-skus`;
-        const vbsCode = generateCs15VbsScript(assemblies, apiUrl);
+        const vbsCode = generateCs15VbsScript(assemblies, '');
 
         const updates: Array<{ assembly: string; sku: string }> = [];
 
@@ -4128,8 +4138,8 @@ End If
             const execution = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
                 exec(cmd, { timeout: Math.max(60000, assemblies.length * 8000) }, (error, stdout, stderr) => {
                     try { fs.unlinkSync(tempScriptPath); } catch (_) { }
-                    if (error && (error as any).code !== 'ETIMEDOUT') {
-                        reject(error);
+                    if (error && error.code !== 2) {
+                        reject(new Error(stdout?.trim() || stderr?.trim() || error.message));
                         return;
                     }
                     resolve({ stdout: stdout || '', stderr: stderr || '' });
@@ -4147,21 +4157,17 @@ End If
                         const asm = parts[0].trim();
                         const sku = parts[1].trim();
                         if (asm && sku) {
-                            updates.push({ assembly: asm, sku });
-                            try {
-                                await db.pool.request()
-                                    .input('assembly', sql.NVarChar, asm)
-                                    .input('sku', sql.NVarChar, sku)
-                                    .query('UPDATE component_changes SET sku = @sku WHERE assembly = @assembly');
-                            } catch (dbErr) { }
+                            if (await saveCs15Sku(asm, sku)) updates.push({ assembly: asm, sku });
                         }
                     }
                 }
             }
 
+            const errors = lines.filter(line => line.startsWith('CS15_ERROR:'));
+            if (errors.length === assemblies.length) throw new Error(errors[0]);
             return {
                 success: true,
-                message: `CS15 ejecutado exitosamente para ${assemblies.length} ensambles con 'A'. SKUs actualizados por nivel máximo: ${updates.length}.`,
+                message: `CS15: ${updates.length} de ${assemblies.length} ensambles guardados. Errores de SAP: ${errors.length}.${errors.length ? ` ${errors[0].slice(11)}` : ''}`,
                 totalFound: assemblies.length,
                 updatedCount: updates.length,
                 updates
@@ -4209,18 +4215,25 @@ End If
         }
     });
 
+    async function saveCs15Sku(assembly: string, sku: string): Promise<boolean> {
+        const result = await db.pool.request()
+            .input('assembly', sql.NVarChar, assembly)
+            .input('sku', sql.NVarChar, sku)
+            .query('UPDATE component_changes SET sku = @sku WHERE LTRIM(RTRIM(assembly)) = @assembly');
+        return result.rowsAffected.some(count => count > 0);
+    }
+
     app.post('/api/sap/update-cs15-skus', async (req, res) => {
         try {
-            const updates = req.body?.updates || [];
+            const updates: unknown = req.body?.updates;
+            if (!Array.isArray(updates) || updates.some(u =>
+                !u || typeof u.assembly !== 'string' || !/^A/i.test(u.assembly.trim()) ||
+                typeof u.sku !== 'string' || !u.sku.trim()
+            )) return res.status(400).json({ success: false, error: 'Resultados CS15 inv?lidos.' });
+
             let updatedCount = 0;
-            for (const u of updates) {
-                if (u.assembly && u.sku) {
-                    await db.pool.request()
-                        .input('assembly', sql.NVarChar, u.assembly)
-                        .input('sku', sql.NVarChar, u.sku)
-                        .query('UPDATE component_changes SET sku = @sku WHERE assembly = @assembly');
-                    updatedCount++;
-                }
+            for (const { assembly, sku } of updates) {
+                if (await saveCs15Sku(assembly.trim(), sku.trim())) updatedCount++;
             }
             return res.json({ success: true, updatedCount });
         } catch (err: any) {
@@ -4275,9 +4288,14 @@ del "%VBS_FILE%" 2>nul
 
 echo.
 echo =========================================================================
-echo Proceso CS15 finalizado. SKUs actualizados por nivel maximo.
+if "%EXIT_CODE%"=="0" (
+    echo Proceso CS15 finalizado.
+) else (
+    echo CS15 termino con errores. Revise el resultado anterior.
+)
 echo =========================================================================
 pause
+exit /b %EXIT_CODE%
 `;
             res.setHeader('Content-Disposition', 'attachment; filename="sync_cs15.bat"');
             res.setHeader('Content-Type', 'application/x-bat');

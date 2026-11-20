@@ -82,6 +82,7 @@ export const SapWebGuiImporter: React.FC<SapWebGuiImporterProps> = ({ onImport, 
             const data = await res.json();
             if (data.success) {
                 setCs15Result(data);
+                if (data.updatedCount > 0) onImport();
                 setNotification({ message: data.message || 'CS15 ejecutado exitosamente.', type: 'success' });
             } else {
                 setNotification({ message: data.error || 'Error ejecutando CS15.', type: 'error' });
@@ -1118,7 +1119,7 @@ pause >nul
                                 disabled={cs15Loading}
                                 className="!bg-purple-600 hover:!bg-purple-700 text-xs !py-2 font-semibold flex items-center gap-1.5"
                             >
-                                {cs15Loading ? 'Ejecutando CS15...' : '🚀 Ejecutar CS15 (Local Windows)'}
+                                {cs15Loading ? 'Ejecutando CS15...' : '🚀 Ejecutar CS15 en el servidor Windows'}
                             </Button>
                         </div>
                     </div>
