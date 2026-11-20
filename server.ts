@@ -3,12 +3,6 @@ import express from 'express';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import nodemailer from 'nodemailer';
-import { CHANGE_COORDINATOR_ROLE, parseUserFamilies, taskRecipients, escapeEmailHtml } from './services/taskOwnership.ts';
-import { canonicalDepartment } from './services/departments.ts';
-import { canonicalFamily, canonicalFamilies } from './services/families.ts';
-import { calendarDate, runTaskReminders, reminderHtml } from './services/taskReminders.ts';
-import { normalizeProduct, PRODUCT_FAMILY_UPDATE_SQL } from './services/productFamilies.ts';
-import { matchSmdProducts, relatedSmdData, parseSmdAssemblies, smdBase, type SmdProductLink } from './services/smdProducts.ts';
 import https from 'https';
 import * as db from './db.ts';
 import { generateEcnSummary } from './services/geminiService.ts';
@@ -1628,7 +1622,7 @@ const { sql } = db;
 
 async function startServer() {
     const app = express();
-    const PORT = Number(process.env.PORT) || 3001;
+    const PORT = Number(process.env.PORT) || 3000;
 
     // --- IIS Reverse Proxy & Load Balancer Trust ---
     // Trust proxy headers from IIS ARR / Reverse Proxies (X-Forwarded-Proto, X-Forwarded-Host, X-Forwarded-For, X-ARR-SSL)
@@ -2730,57 +2724,24 @@ async function startServer() {
 
 
     // --- API ROUTES ---
-    const getSmdLinks = async (ecnId?: string): Promise<SmdProductLink[]> => {
-        if (!db.isLiveMssqlConnected()) return db.getMemoryStore().component_changes
-            .filter(change => !ecnId || change.ecn_id === ecnId).flatMap(matchSmdProducts);
-        const request = db.pool.request();
-        if (ecnId) request.input('ecnId', sql.NVarChar, ecnId);
-        return (await request.query(`SELECT * FROM dbo.component_change_smd_products ${ecnId ? 'WHERE ecnId=@ecnId' : ''}`)).recordset;
-    };
-    const groupSmdLinks = (links: SmdProductLink[]) => {
-        const groups = new Map<string, SmdProductLink[]>();
-        for (const link of links) {
-            const id = String(link.changeId).toLowerCase();
-            groups.set(id, [...(groups.get(id) || []), link]);
-        }
-        return groups;
-    };
-    const getEcnMailChanges = async (ecnId: string) => {
-        const changes = await db.pool.request().input('ecn_id', sql.NVarChar, ecnId)
-            .query('SELECT id, assembly, sku, family, old_component, new_component, old_subassembly, new_subassembly FROM component_changes WHERE ecn_id=@ecn_id');
-        const groups = groupSmdLinks(await getSmdLinks(ecnId));
-        return changes.recordset.flatMap(change => {
-            const related = relatedSmdData(change, groups.get(String(change.id).toLowerCase()) || []);
-            return related.relatedProducts.length
-                ? [...(change.sku && !related.relatedProducts.some(product => product.sku === change.sku) ? [change] : []), ...related.relatedProducts.map(product => ({ ...change, sku: product.sku, family: product.family }))]
-                : [change];
-        });
-    };
 
     app.get('/api/users', async (req, res) => {
         try {
             const result = await db.pool.request().query('SELECT * FROM users ORDER BY name');
-            res.json(result.recordset.map(user => ({ ...user, families: parseUserFamilies(user.families) })));
+            res.json(result.recordset);
         } catch (e: any) { res.status(500).json({ error: e.message }); }
     });
 
     app.put('/api/users/:id', async (req, res) => {
         try {
             const user = req.body;
-            const department = canonicalDepartment(user.department);
-            if (!department) return res.status(400).json({ error: 'Seleccione un departamento válido del catálogo.' });
-            const families = parseUserFamilies(user.families);
-            if (!families.length) return res.status(400).json({ error: 'Asigne al menos una familia al usuario.' });
-            if (user.taskRole && user.taskRole !== CHANGE_COORDINATOR_ROLE) return res.status(400).json({ error: 'Rol de tareas inválido.' });
             await db.pool.request()
                 .input('id', sql.NVarChar, req.params.id)
                 .input('name', sql.NVarChar, user.name)
                 .input('email', sql.NVarChar, user.email)
-                .input('dept', sql.NVarChar, department)
+                .input('dept', sql.NVarChar, user.department)
                 .input('photo', sql.NVarChar, user.photo || null)
-                .input('taskRole', sql.NVarChar, user.taskRole || null)
-                .input('families', sql.NVarChar, JSON.stringify(families))
-                .query("UPDATE users SET name=@name, email=@email, department=@dept, photo=@photo, taskRole=@taskRole, families=@families WHERE id=@id");
+                .query("UPDATE users SET name=@name, email=@email, department=@dept, photo=@photo WHERE id=@id");
             res.json({ message: 'User updated' });
         } catch (e: any) { res.status(500).json({ error: e.message }); }
     });
@@ -2836,11 +2797,6 @@ async function startServer() {
                     if (newVal) map[c.ecn_id].new.add(newVal);
                     if (c.site) map[c.ecn_id].sites.add(c.site);
                 });
-                for (const link of await getSmdLinks()) {
-                    if (!map[link.ecnId!]) continue;
-                    map[link.ecnId!].skus.add(link.sku);
-                    map[link.ecnId!].families.add(link.family);
-                }
                 ecns.forEach(e => {
                     e.skuList = map[e.id] ? Array.from(map[e.id].skus).join(', ') : '';
                     e.oldComponentList = map[e.id] ? Array.from(map[e.id].old).join(', ') : '';
@@ -2869,9 +2825,7 @@ async function startServer() {
             if (!ecn) return res.status(404).json({ error: 'Not found' });
 
             const changes = await db.pool.request().input('id', sql.NVarChar, req.params.id).query("SELECT * FROM component_changes WHERE ecn_id=@id");
-            const smdGroups = groupSmdLinks(await getSmdLinks(String(req.params.id)));
             ecn.changes = changes.recordset.map(c => ({
-                ...relatedSmdData(c, smdGroups.get(String(c.id).toLowerCase()) || []),
                 id: c.id,
                 assembly: c.assembly,
                 assemblyRevision: c.assembly_revision,
@@ -2906,9 +2860,7 @@ async function startServer() {
             if (!ecn) return res.status(404).json({ error: 'ECN not found' });
 
             const changes = await db.pool.request().input('id', sql.NVarChar, ecnId).query("SELECT * FROM component_changes WHERE ecn_id=@id");
-            const smdGroups = groupSmdLinks(await getSmdLinks(String(ecnId)));
             ecn.changes = changes.recordset.map(c => ({
-                ...relatedSmdData(c, smdGroups.get(String(c.id).toLowerCase()) || []),
                 id: c.id,
                 assembly: c.assembly,
                 assemblyRevision: c.assembly_revision,
@@ -3006,7 +2958,7 @@ async function startServer() {
                             .input('old_comp', sql.NVarChar, change.oldComponent || '')
                             .input('new_comp', sql.NVarChar, change.newComponent || '')
                             .input('sku', sql.NVarChar, change.sku || '')
-                            .input('family', sql.NVarChar, canonicalFamily(change.family))
+                            .input('family', sql.NVarChar, change.family || '')
                             .input('demand', sql.Decimal(18, 2), change.demand || 0)
                             .input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0)
                             .input('open_po', sql.Decimal(18, 2), change.openPoQty || 0)
@@ -3033,7 +2985,7 @@ async function startServer() {
                             .input('old_comp', sql.NVarChar, change.oldComponent || '')
                             .input('new_comp', sql.NVarChar, change.newComponent || '')
                             .input('sku', sql.NVarChar, change.sku || '')
-                            .input('family', sql.NVarChar, canonicalFamily(change.family))
+                            .input('family', sql.NVarChar, change.family || '')
                             .input('demand', sql.Decimal(18, 2), change.demand || 0)
                             .input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0)
                             .input('open_po', sql.Decimal(18, 2), change.openPoQty || 0)
@@ -3085,7 +3037,7 @@ async function startServer() {
                             .input('old_comp', sql.NVarChar, change.oldComponent || '')
                             .input('new_comp', sql.NVarChar, change.newComponent || '')
                             .input('sku', sql.NVarChar, change.sku || '')
-                            .input('family', sql.NVarChar, canonicalFamily(change.family))
+                            .input('family', sql.NVarChar, change.family || '')
                             .input('demand', sql.Decimal(18, 2), change.demand || 0)
                             .input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0)
                             .input('open_po', sql.Decimal(18, 2), change.openPoQty || 0)
@@ -3124,7 +3076,7 @@ async function startServer() {
                                     .input('old_comp', sql.NVarChar, change.oldComponent || '')
                                     .input('new_comp', sql.NVarChar, change.newComponent || '')
                                     .input('sku', sql.NVarChar, change.sku || '')
-                                    .input('family', sql.NVarChar, canonicalFamily(change.family))
+                                    .input('family', sql.NVarChar, change.family || '')
                                     .input('demand', sql.Decimal(18, 2), change.demand || 0)
                                     .input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0)
                                     .input('open_po', sql.Decimal(18, 2), change.openPoQty || 0)
@@ -3991,6 +3943,350 @@ pause
         }
     });
 
+    // --- 7. SAP CS15 Where-Used Automation (Assemblies starting with 'A' -> Max Level -> SKU) ---
+    async function getTargetAssembliesForCs15(): Promise<string[]> {
+        try {
+            const result = await db.pool.request().query(`
+                SELECT DISTINCT assembly 
+                FROM component_changes 
+                WHERE assembly LIKE 'A%' AND assembly IS NOT NULL AND LTRIM(RTRIM(assembly)) <> ''
+            `);
+            return result.recordset.map((r: any) => String(r.assembly).trim()).filter(Boolean);
+        } catch (e) {
+            const mem = db.getMemoryStore();
+            const set = new Set<string>();
+            for (const c of mem.component_changes) {
+                if (c.assembly && c.assembly.toUpperCase().startsWith('A')) {
+                    set.add(c.assembly.trim());
+                }
+            }
+            return Array.from(set);
+        }
+    }
+
+    function generateCs15VbsScript(assemblies: string[], apiUrl: string): string {
+        const jsonEscapedList = assemblies.map(a => `"${a}"`).join(', ');
+        return `'=============================================================================
+' HONEYWELL ECN MANAGER - AUTOMATIZACION TRANSACCION CS15 (WHERE-USED)
+' Ensambles que inician con 'A' -> Extraccion nivel maximo (Nv.) -> SKU
+'=============================================================================
+On Error Resume Next
+
+Dim SapGuiAuto, appObj, connObj, sessionObj, wshShell, httpObj
+Dim assemblyList, currentAssembly, i, rowCount, r, grid
+Dim currMat, currLvl, maxLvl, bestSku, totalUpdated, updatePayload
+
+Set wshShell = CreateObject("WScript.Shell")
+totalUpdated = 0
+updatePayload = "["
+
+Set SapGuiAuto = GetObject("SAPGUI")
+If Err.Number <> 0 Or SapGuiAuto Is Nothing Then
+    WScript.Echo "RESULT_ERR:No se detecto proceso activo de SAP GUI."
+    WScript.Quit 1
+End If
+
+Set appObj = SapGuiAuto.GetScriptingEngine
+If Err.Number <> 0 Or appObj Is Nothing Then
+    WScript.Echo "RESULT_ERR:Scripting de SAP GUI deshabilitado."
+    WScript.Quit 1
+End If
+
+If appObj.Children.Count = 0 Then
+    WScript.Echo "RESULT_ERR:No hay conexiones abiertas en SAP Logon."
+    WScript.Quit 1
+End If
+
+Set connObj = appObj.Children(0)
+Set sessionObj = connObj.Children(0)
+
+If sessionObj Is Nothing Then
+    WScript.Echo "RESULT_ERR:No hay sesion activa en SAP GUI."
+    WScript.Quit 1
+End If
+
+WScript.Echo "Conectado a SAP GUI. Iniciando transaccion CS15..."
+
+sessionObj.findById("wnd[0]/tbar[0]/btn[3]").press
+sessionObj.findById("wnd[0]/tbar[0]/btn[3]").press
+sessionObj.findById("wnd[0]").maximize
+
+assemblyList = Array(${jsonEscapedList})
+
+For i = LBound(assemblyList) To UBound(assemblyList)
+    currentAssembly = Trim(assemblyList(i))
+    
+    If currentAssembly <> "" Then
+        ' 1. Entrar a CS15
+        sessionObj.findById("wnd[0]/tbar[0]/okcd").Text = "/nCS15"
+        sessionObj.findById("wnd[0]").SendVKey 0
+        
+        ' 2. Pantalla inicial (Imagen 1)
+        sessionObj.findById("wnd[0]/usr/ctxtRC29N-IDNRK").Text = currentAssembly
+        sessionObj.findById("wnd[0]/usr/chkRC29N-DIREKT").Selected = True
+        sessionObj.findById("wnd[0]/usr/chkRC29N-MATUV").Selected = True
+        sessionObj.findById("wnd[0]/usr/ctxtRC29N-DATBI").Text = "31.12.9999"
+        sessionObj.findById("wnd[0]/tbar[0]/btn[8]").press
+        
+        ' 3. Pantalla de vista (Imagen 2)
+        sessionObj.findById("wnd[0]/usr/ctxtRC29N-DATUV").Text = "01.01.2026"
+        sessionObj.findById("wnd[0]/usr/ctxtRC29N-WERKS").Text = "5205"
+        sessionObj.findById("wnd[0]/usr/chkRC29N-STULF").Selected = True
+        sessionObj.findById("wnd[0]/usr/chkRC29N-STFLG").Selected = True
+        sessionObj.findById("wnd[0]/tbar[0]/btn[8]").press
+        
+        ' 4. Resultado (Imagen 3) - Buscar mayor Nv.
+        maxLvl = -1
+        bestSku = ""
+        
+        Set grid = sessionObj.findById("wnd[0]/usr/cntlGRID1/shell")
+        If grid Is Nothing Then
+            Set grid = sessionObj.findById("wnd[0]/usr/cntlCC_CONTAINER/shell")
+        End If
+        
+        If Not (grid Is Nothing) Then
+            rowCount = grid.RowCount
+            For r = 0 To rowCount - 1
+                currMat = Trim(CStr(grid.GetCellValue(r, "IDNRK")))
+                If currMat = "" Then currMat = Trim(CStr(grid.GetCellValue(r, "MATNR")))
+                
+                currLvl = -1
+                Err.Clear
+                currLvl = CInt(Trim(CStr(grid.GetCellValue(r, "STUFE"))))
+                If Err.Number <> 0 Then
+                    Err.Clear
+                    currLvl = CInt(Trim(CStr(grid.GetCellValue(r, "LEVEL"))))
+                End If
+                If Err.Number <> 0 Then
+                    Err.Clear
+                    currLvl = CInt(Trim(CStr(grid.GetCellValue(r, "NV"))))
+                End If
+                On Error Resume Next
+                
+                If currLvl > maxLvl And currMat <> "" Then
+                    maxLvl = currLvl
+                    bestSku = currMat
+                End If
+            Next
+        End If
+        
+        ' Volver al inicio para siguiente ensamble
+        sessionObj.findById("wnd[0]/tbar[0]/btn[3]").press
+        sessionObj.findById("wnd[0]/tbar[0]/btn[3]").press
+        
+        If bestSku <> "" Then
+            WScript.Echo "CS15_OK:" & currentAssembly & ":::" & bestSku & ":::Nivel:" & CStr(maxLvl)
+            If totalUpdated > 0 Then updatePayload = updatePayload & ","
+            updatePayload = updatePayload & "{""assembly"":""" & currentAssembly & """,""sku"":""" & bestSku & """}"
+            totalUpdated = totalUpdated + 1
+        Else
+            WScript.Echo "CS15_EMPTY:" & currentAssembly
+        End If
+    End If
+Next
+
+updatePayload = updatePayload & "]"
+WScript.Echo "RESULT_OK:FINISHED_CS15_COUNT:" & CStr(totalUpdated)
+
+If totalUpdated > 0 And "${apiUrl}" <> "" Then
+    Err.Clear
+    Set httpObj = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    If Err.Number <> 0 Then
+        Set httpObj = CreateObject("MSXML2.XMLHTTP")
+    End If
+    If Not (httpObj Is Nothing) Then
+        httpObj.Open "POST", "${apiUrl}", False
+        httpObj.setRequestHeader "Content-Type", "application/json"
+        httpObj.Send "{""updates"":" & updatePayload & "}"
+    End If
+End If
+`;
+    }
+
+    async function runCs15ExtractionLocally(assemblies: string[]): Promise<{
+        success: boolean;
+        message: string;
+        totalFound: number;
+        updatedCount: number;
+        updates: Array<{ assembly: string; sku: string }>;
+    }> {
+        if (assemblies.length === 0) {
+            return { success: true, message: 'No hay ensambles que inicien con A.', totalFound: 0, updatedCount: 0, updates: [] };
+        }
+
+        const tempScriptPath = path.join(os.tmpdir(), `sap_cs15_${Date.now()}.vbs`);
+        const host = 'localhost:3000';
+        const apiUrl = `http://${host}/api/sap/update-cs15-skus`;
+        const vbsCode = generateCs15VbsScript(assemblies, apiUrl);
+
+        const updates: Array<{ assembly: string; sku: string }> = [];
+
+        try {
+            fs.writeFileSync(tempScriptPath, vbsCode, 'utf-8');
+            const cmd = getCScriptCommand(tempScriptPath);
+
+            const execution = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+                exec(cmd, { timeout: Math.max(60000, assemblies.length * 8000) }, (error, stdout, stderr) => {
+                    try { fs.unlinkSync(tempScriptPath); } catch (_) { }
+                    if (error && (error as any).code !== 'ETIMEDOUT') {
+                        reject(error);
+                        return;
+                    }
+                    resolve({ stdout: stdout || '', stderr: stderr || '' });
+                });
+            });
+
+            const combined = ((execution.stdout || '') + '\n' + (execution.stderr || '')).trim();
+            const lines = combined.split(/\r?\n/);
+
+            for (const line of lines) {
+                if (line.startsWith('CS15_OK:')) {
+                    const payload = line.replace('CS15_OK:', '');
+                    const parts = payload.split(':::');
+                    if (parts.length >= 2) {
+                        const asm = parts[0].trim();
+                        const sku = parts[1].trim();
+                        if (asm && sku) {
+                            updates.push({ assembly: asm, sku });
+                            try {
+                                await db.pool.request()
+                                    .input('assembly', sql.NVarChar, asm)
+                                    .input('sku', sql.NVarChar, sku)
+                                    .query('UPDATE component_changes SET sku = @sku WHERE assembly = @assembly');
+                            } catch (dbErr) { }
+                        }
+                    }
+                }
+            }
+
+            return {
+                success: true,
+                message: `CS15 ejecutado exitosamente para ${assemblies.length} ensambles con 'A'. SKUs actualizados por nivel máximo: ${updates.length}.`,
+                totalFound: assemblies.length,
+                updatedCount: updates.length,
+                updates
+            };
+        } catch (err: any) {
+            try { fs.unlinkSync(tempScriptPath); } catch (_) { }
+            throw new Error(`Fallo ejecutando automatización CS15: ${err.message}`);
+        }
+    }
+
+    app.post('/api/sap/sync-cs15-skus', async (req, res) => {
+        try {
+            const assemblies = await getTargetAssembliesForCs15();
+            if (assemblies.length === 0) {
+                return res.json({
+                    success: true,
+                    message: 'No se encontraron ensambles que inicien con la letra "A" en la base de datos.',
+                    totalFound: 0,
+                    updatedCount: 0,
+                    updates: []
+                });
+            }
+
+            if (process.platform === 'win32') {
+                const result = await runCs15ExtractionLocally(assemblies);
+                return res.json(result);
+            }
+
+            const host = req.get('host') || 'localhost:3000';
+            const protocol = req.protocol || 'http';
+
+            return res.json({
+                success: true,
+                mode: 'cloud_ready',
+                totalFound: assemblies.length,
+                assemblies,
+                downloadVbsUrl: `${protocol}://${host}/api/sap/download-cs15-vbs`,
+                downloadBatUrl: `${protocol}://${host}/api/sap/download-cs15-bat`,
+                webguiUrl: 'https://brpwas.honeywell.com/sap/bc/gui/sap/its/webgui/?~transaction=CS15',
+                message: `Se encontraron ${assemblies.length} ensamble(s) que inician con 'A' para procesar en CS15.`
+            });
+        } catch (err: any) {
+            console.error('[CS15 Sync Error]', err);
+            return res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.post('/api/sap/update-cs15-skus', async (req, res) => {
+        try {
+            const updates = req.body?.updates || [];
+            let updatedCount = 0;
+            for (const u of updates) {
+                if (u.assembly && u.sku) {
+                    await db.pool.request()
+                        .input('assembly', sql.NVarChar, u.assembly)
+                        .input('sku', sql.NVarChar, u.sku)
+                        .query('UPDATE component_changes SET sku = @sku WHERE assembly = @assembly');
+                    updatedCount++;
+                }
+            }
+            return res.json({ success: true, updatedCount });
+        } catch (err: any) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.get('/api/sap/download-cs15-vbs', async (req, res) => {
+        try {
+            const assemblies = await getTargetAssembliesForCs15();
+            const host = req.get('host') || 'localhost:3000';
+            const protocol = req.protocol || 'http';
+            const apiUrl = `${protocol}://${host}/api/sap/update-cs15-skus`;
+            const vbsContent = generateCs15VbsScript(assemblies, apiUrl);
+            res.setHeader('Content-Disposition', 'attachment; filename="sync_cs15_skus.vbs"');
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            return res.send(vbsContent);
+        } catch (err: any) {
+            return res.status(500).send(`Error generando script CS15 VBS: ${err.message}`);
+        }
+    });
+
+    app.get('/api/sap/download-cs15-bat', async (req, res) => {
+        try {
+            const host = req.get('host') || 'localhost:3000';
+            const protocol = req.protocol || 'http';
+            const vbsUrl = `${protocol}://${host}/api/sap/download-cs15-vbs`;
+            const batContent = `@echo off
+setlocal enabledelayedexpansion
+title Honeywell ECN Manager - Automatizacion CS15 Where-Used
+echo =========================================================================
+echo   HONEYWELL ECN MANAGER - AUTOMATIZACION CS15 (ENSAMBLES CON A)
+echo =========================================================================
+echo Conectando con SAP GUI y ejecutando CS15 para cada ensamble...
+echo.
+
+set "VBS_FILE=%TEMP%\\sync_cs15_%RANDOM%.vbs"
+powershell -Command "Invoke-WebRequest -Uri '${vbsUrl}' -OutFile '%VBS_FILE%'" 2>nul
+if not exist "%VBS_FILE%" (
+    curl -s -k "${vbsUrl}" -o "%VBS_FILE%"
+)
+
+if not exist "%VBS_FILE%" (
+    echo [ERROR] No se pudo descargar el script VBS.
+    pause
+    exit /b 1
+)
+
+cscript.exe //NoLogo "%VBS_FILE%"
+set "EXIT_CODE=%ERRORLEVEL%"
+del "%VBS_FILE%" 2>nul
+
+echo.
+echo =========================================================================
+echo Proceso CS15 finalizado. SKUs actualizados por nivel maximo.
+echo =========================================================================
+pause
+`;
+            res.setHeader('Content-Disposition', 'attachment; filename="sync_cs15.bat"');
+            res.setHeader('Content-Type', 'application/x-bat');
+            return res.send(batContent);
+        } catch (err: any) {
+            return res.status(500).send(`Error generando script CS15 BAT: ${err.message}`);
+        }
+    });
+
     // 6. Endpoint to test/verify SAP auto-connect and shortcut "Inicio" connection
     app.post('/api/sap/ensure-connection', async (req, res) => {
         const connectionName = req.body?.connectionName || 'Inicio';
@@ -4211,7 +4507,7 @@ pause
                     cReq.input('new_sub_rev', sql.NVarChar, dbText(rec.newSubassemblyRevision, 50));
                     cReq.input('new_sub_desc', sql.NVarChar, dbText(rec.newSubassemblyDescription, 1000));
                     cReq.input('sku', sql.NVarChar, dbText(rec.topSku || rec.sku, 100));
-                    cReq.input('family', sql.NVarChar, canonicalFamily(dbText(rec.family, 100, 'VESDA')));
+                    cReq.input('family', sql.NVarChar, dbText(rec.family, 100, 'VESDA'));
                     cReq.input('demand', sql.Decimal(18, 2), rec.demand || rec.qty || 0);
                     cReq.input('on_hand', sql.Decimal(18, 2), rec.onHandInventory || 0);
                     cReq.input('open_po', sql.Decimal(18, 2), rec.openPoQty || 0);
@@ -4232,7 +4528,7 @@ pause
                         uReq.input('new_comp_rev', sql.NVarChar, rec.newComponentRevision || '');
                         uReq.input('new_comp_desc', sql.NVarChar, rec.newComponentDescription || '');
                         uReq.input('sku', sql.NVarChar, rec.topSku || rec.sku || '');
-                        uReq.input('family', sql.NVarChar, canonicalFamily(rec.family || 'VESDA'));
+                        uReq.input('family', sql.NVarChar, rec.family || 'VESDA');
                         uReq.input('demand', sql.Decimal(18, 2), rec.demand || rec.qty || 0);
                         uReq.input('on_hand', sql.Decimal(18, 2), rec.onHandInventory || 0);
                         uReq.input('open_po', sql.Decimal(18, 2), rec.openPoQty || 0);
@@ -4980,7 +5276,7 @@ pause
                         cReq.input('new_sub_rev', sql.NVarChar, change.newSubassemblyRevision || '');
                         cReq.input('new_sub_desc', sql.NVarChar, change.newSubassemblyDescription || '');
                         cReq.input('sku', sql.NVarChar, change.sku || '');
-                        cReq.input('family', sql.NVarChar, canonicalFamily(change.family));
+                        cReq.input('family', sql.NVarChar, change.family || '');
                         cReq.input('demand', sql.Decimal(18, 2), change.demand || 0);
                         cReq.input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0);
                         cReq.input('open_po', sql.Decimal(18, 2), change.openPoQty || 0);
@@ -5001,7 +5297,7 @@ pause
                             uReq.input('new_comp_rev', sql.NVarChar, change.newComponentRevision || '');
                             uReq.input('new_comp_desc', sql.NVarChar, change.newComponentDescription || '');
                             uReq.input('sku', sql.NVarChar, change.sku || '');
-                            uReq.input('family', sql.NVarChar, canonicalFamily(change.family));
+                            uReq.input('family', sql.NVarChar, change.family || '');
                             uReq.input('demand', sql.Decimal(18, 2), change.demand || 0);
                             uReq.input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0);
                             uReq.input('open_po', sql.Decimal(18, 2), change.openPoQty || 0);
@@ -5098,15 +5394,6 @@ pause
 
     app.post('/api/import/users', async (req, res) => {
         const { users, fileName } = req.body;
-        if (Array.isArray(users) && users.some(user => !canonicalDepartment(user.department))) {
-            return res.status(400).json({ error: 'Todos los usuarios deben tener un departamento válido del catálogo.' });
-        }
-        if (!Array.isArray(users) || users.some(user => !parseUserFamilies(user.families).length)) {
-            return res.status(400).json({ error: 'Cada usuario importado debe tener al menos una familia a cargo.' });
-        }
-        if (users.some(user => user.taskRole && user.taskRole !== CHANGE_COORDINATOR_ROLE)) {
-            return res.status(400).json({ error: 'Rol de tareas inválido en el archivo de usuarios.' });
-        }
         const transaction = new sql.Transaction(db.pool);
         try {
             await transaction.begin();
@@ -5115,15 +5402,13 @@ pause
                     .input('id', sql.NVarChar, user.id)
                     .input('name', sql.NVarChar, user.name)
                     .input('email', sql.NVarChar, user.email)
-                    .input('dept', sql.NVarChar, canonicalDepartment(user.department))
+                    .input('dept', sql.NVarChar, user.department)
                     .input('photo', sql.NVarChar, user.photo || null)
-                    .input('families', sql.NVarChar, JSON.stringify(parseUserFamilies(user.families)))
-                    .input('taskRole', sql.NVarChar, user.taskRole || null)
                     .query(`
                         IF EXISTS (SELECT 1 FROM users WHERE id = @id)
-                            UPDATE users SET name = @name, email = @email, department = @dept, photo = @photo, families = @families, taskRole = COALESCE(@taskRole, taskRole) WHERE id = @id
+                            UPDATE users SET name = @name, email = @email, department = @dept, photo = @photo WHERE id = @id
                         ELSE
-                            INSERT INTO users (id, name, email, department, photo, families, taskRole) VALUES (@id, @name, @email, @dept, @photo, @families, @taskRole)
+                            INSERT INTO users (id, name, email, department, photo) VALUES (@id, @name, @email, @dept, @photo)
                     `);
             }
             await transaction.request()
@@ -5173,49 +5458,6 @@ pause
 
     app.post('/api/import/sku-family', async (req, res) => {
         const { data } = req.body;
-        if (!Array.isArray(data) || !data.length) return res.status(400).json({ error: 'El archivo no contiene registros.' });
-        const productMode = data.some(item => item.Product !== undefined || item.SBU !== undefined);
-        if (productMode) {
-            const products = new Map<string, string>();
-            for (const row of data) {
-                const product = normalizeProduct(row.Product);
-                const family = canonicalFamily(row.SBU);
-                if (!product || !family || product.length > 100 || family.length > 100) return res.status(400).json({ error: 'Cada fila debe incluir Product y SBU válidos (máximo 100 caracteres).' });
-                if (products.has(product) && products.get(product) !== family) return res.status(400).json({ error: `El producto ${product} tiene más de una familia en el archivo.` });
-                products.set(product, family);
-            }
-            if (!db.isLiveMssqlConnected()) return res.status(503).json({ error: 'Se requiere conexión SQL para guardar el catálogo Product/SBU.' });
-            const catalogTransaction = new sql.Transaction(db.pool);
-            try {
-                await catalogTransaction.begin();
-                if ((catalogTransaction as any).isMemory) throw new Error('No se pudo iniciar la transacción SQL del catálogo.');
-                for (const [product, family] of products) await catalogTransaction.request()
-                    .input('product', sql.NVarChar, product).input('family', sql.NVarChar, family).query(`
-                        MERGE dbo.product_family_catalog WITH (HOLDLOCK) AS target
-                        USING (SELECT @product AS product, @family AS family) AS source ON target.product=source.product
-                        WHEN MATCHED THEN UPDATE SET family=source.family
-                        WHEN NOT MATCHED THEN INSERT (product, family) VALUES (source.product, source.family);
-                    `);
-                let smdLinks = 0;
-                for (const row of data) for (const smd of parseSmdAssemblies(row.SMD)) {
-                    if (smd.length > 100) throw new Error('El número de ensamble SMD supera 100 caracteres.');
-                    await catalogTransaction.request().input('product', sql.NVarChar, normalizeProduct(row.Product))
-                        .input('smd', sql.NVarChar, smd).input('base', sql.NVarChar, smdBase(smd)).query(`
-                            MERGE dbo.smd_product_catalog WITH (HOLDLOCK) AS target
-                            USING (SELECT @product AS product, @smd AS smd, @base AS smd_base) source
-                            ON target.product=source.product AND target.smd=source.smd
-                            WHEN NOT MATCHED THEN INSERT(smd,smd_base,product) VALUES(source.smd,source.smd_base,source.product);
-                        `);
-                    smdLinks++;
-                }
-                const updated = await catalogTransaction.request().query(PRODUCT_FAMILY_UPDATE_SQL);
-                await catalogTransaction.commit();
-                return res.json({ success: true, products: products.size, smdLinks, updated: updated.rowsAffected[0] || 0 });
-            } catch (error: any) {
-                try { await catalogTransaction.rollback(); } catch {}
-                return res.status(500).json({ error: error.message });
-            }
-        }
         const transaction = new sql.Transaction(db.pool);
         try {
             await transaction.begin();
@@ -5224,7 +5466,7 @@ pause
                 await transaction.request()
                     .input('assembly', sql.NVarChar, item.Assembly.trim())
                     .input('sku', sql.NVarChar, (item.SKU || '').trim())
-                    .input('family', sql.NVarChar, canonicalFamily(item.Family))
+                    .input('family', sql.NVarChar, (item.Family || '').trim())
                     .query("UPDATE component_changes SET sku = @sku, family = @family WHERE assembly = @assembly");
             }
             await transaction.request()
@@ -5513,7 +5755,7 @@ pause
             await db.pool.request()
                 .input('assembly', sql.NVarChar, assembly)
                 .input('sku', sql.NVarChar, sku || '')
-                .input('family', sql.NVarChar, canonicalFamily(family))
+                .input('family', sql.NVarChar, family || '')
                 .query("UPDATE component_changes SET sku = @sku, family = @family WHERE assembly = @assembly");
             res.json({ success: true, message: 'SKU y Familia actualizados correctamente para el ensamble.' });
         } catch (e: any) {
@@ -5620,9 +5862,6 @@ pause
             host: host,
             port: port,
             secure: settings.secure === 'true',
-            connectionTimeout: 10000,
-            greetingTimeout: 10000,
-            socketTimeout: 15000,
             tls: {
                 rejectUnauthorized: false
             },
@@ -5643,64 +5882,6 @@ pause
             from,
             fromName
         };
-    };
-
-    let remindersRunning = false;
-    const checkTaskReminders = async () => {
-        if (remindersRunning || !db.isLiveMssqlConnected()) return;
-        remindersRunning = true;
-        try {
-            const today = calendarDate(new Date(), process.env.TASK_TIME_ZONE || 'America/Denver');
-            let mail: Awaited<ReturnType<typeof getEmailTransporter>> | undefined;
-            await runTaskReminders({
-                today,
-                getTasks: async () => (await db.pool.request().input('today', sql.Date, today).query(`
-                    SELECT id, ecn_id AS ecnId, family, department, task_name AS taskName, status,
-                        assigned_user_id AS assignedUserId, due_date AS dueDate
-                    FROM dbo.implementation_tasks
-                    WHERE status IN ('Pendiente', 'En Proceso') AND DATEDIFF(day, @today, due_date) IN (5, 3, 1)
-                `)).recordset,
-                getUsers: async () => (await db.pool.request().query('SELECT * FROM users')).recordset,
-                getContext: async task => {
-                    const ecn = await db.pool.request().input('id', sql.NVarChar, task.ecnId).query('SELECT description FROM ecns WHERE id=@id');
-                    return { description: ecn.recordset[0]?.description || '', changes: await getEcnMailChanges(task.ecnId) };
-                },
-                claim: async delivery => {
-                    const token = uuidv4();
-                    const result = await db.pool.request()
-                        .input('id', sql.UniqueIdentifier, delivery.task.id).input('due', sql.Date, delivery.dueDate)
-                        .input('days', sql.Int, delivery.days).input('userId', sql.NVarChar, delivery.user.id)
-                        .input('token', sql.UniqueIdentifier, token).query(`
-                            MERGE dbo.task_reminder_deliveries WITH (HOLDLOCK) AS target
-                            USING (SELECT @id AS task_id, @due AS due_date, @days AS days_before, @userId AS user_id) AS source
-                            ON target.task_id=source.task_id AND target.due_date=source.due_date
-                                AND target.days_before=source.days_before AND target.user_id=source.user_id
-                            WHEN MATCHED AND target.sent_at IS NULL AND target.attempted_at < DATEADD(minute, -30, SYSUTCDATETIME())
-                                THEN UPDATE SET claim_token=@token, attempted_at=SYSUTCDATETIME()
-                            WHEN NOT MATCHED THEN INSERT (task_id, due_date, days_before, user_id, claim_token, attempted_at)
-                                VALUES (@id, @due, @days, @userId, @token, SYSUTCDATETIME())
-                            OUTPUT inserted.claim_token;
-                        `);
-                    return result.recordset.length ? token : undefined;
-                },
-                send: async (delivery, context) => {
-                    mail ||= await getEmailTransporter();
-                    const info = await mail.transporter.sendMail({
-                        from: `"${mail.fromName}" <${mail.from}>`, to: delivery.user.email,
-                        subject: `[ECN ${delivery.task.ecnId}] Recordatorio ${delivery.days} día(s): ${delivery.task.taskName}`.replace(/[\r\n]/g, ' '),
-                        html: reminderHtml(delivery, context)
-                    });
-                    if (info.rejected?.length) throw new Error('Destinatario de recordatorio rechazado por SMTP');
-                },
-                finish: async (delivery, token, sent) => {
-                    await db.pool.request().input('token', sql.UniqueIdentifier, token).query(sent
-                        ? 'UPDATE dbo.task_reminder_deliveries SET sent_at=SYSUTCDATETIME() WHERE claim_token=@token'
-                        : 'UPDATE dbo.task_reminder_deliveries SET attempted_at=DATEADD(minute,-31,SYSUTCDATETIME()) WHERE claim_token=@token AND sent_at IS NULL');
-                },
-                onError: error => console.error('[Task Reminders] Delivery failed:', error)
-            });
-        } catch (error) { console.error('[Task Reminders] Check failed:', error); }
-        finally { remindersRunning = false; }
     };
 
     app.post('/api/settings/email/test', async (req, res) => {
@@ -5892,7 +6073,7 @@ pause
         { department: 'Finanzas', taskName: 'Costeo de Materiales' },
         { department: 'Materiales', taskName: 'Agregar Material a Listado de Scrap' },
         { department: 'Ingeniería de Manufactura', taskName: 'Creación / Actualización de Instrucciones de Trabajo' },
-        { department: 'Calidad', taskName: 'Validación de Calidad / Liberación de Primera Pieza' },
+        { department: 'Ingeniería de Calidad', taskName: 'Validación de Calidad / Liberación de Primera Pieza' },
         { department: 'Ingeniería de Producto', taskName: 'Validación de Muestras e Ingeniería' }
     ];
 
@@ -5915,8 +6096,7 @@ pause
                     t.status,
                     t.due_date as dueDate,
                     t.comments,
-                    t.updated_at as updatedAt,
-                    t.created_at as createdAt
+                    t.updated_at as updatedAt
                 FROM implementation_tasks t
                 LEFT JOIN users u ON t.assigned_user_id = u.id
                 WHERE 1=1
@@ -5924,7 +6104,7 @@ pause
             const reqDb = db.pool.request();
             if (family) {
                 query += " AND t.family = @family";
-                reqDb.input('family', sql.NVarChar, canonicalFamily(family));
+                reqDb.input('family', sql.NVarChar, family);
             }
             if (department) {
                 query += " AND t.department = @department";
@@ -5958,80 +6138,29 @@ pause
                 return res.status(400).json({ error: 'El número de ECN es requerido' });
             }
 
-            const ecnResult = await db.pool.request().input('id', sql.NVarChar, ecnId.trim())
-                .query('SELECT id, description FROM ecns WHERE id=@id');
-            const ecn = ecnResult.recordset[0];
-            if (!ecn) return res.status(400).json({ error: 'El ECN indicado no existe.' });
-            const changes = await getEcnMailChanges(ecnId.trim());
-            const taskFamilies = canonicalFamily(family) && canonicalFamily(family) !== 'GENERAL'
-                ? [canonicalFamily(family)]
-                : canonicalFamilies(changes.map(change => change.family));
-            const usersResult = await db.pool.request().query('SELECT * FROM users ORDER BY name');
-            const recipients = taskRecipients(usersResult.recordset, department || 'General', taskFamilies, assignedUserId);
-            if (assignedUserId && !recipients.length) return res.status(400).json({ error: 'El responsable seleccionado no existe.' });
-            const resolvedUserId = assignedUserId || (recipients.length === 1 ? recipients[0].id : null);
             const taskId = uuidv4();
             await db.pool.request()
                 .input('id', sql.UniqueIdentifier, taskId)
                 .input('ecnId', sql.NVarChar, ecnId.trim())
-                .input('family', sql.NVarChar, canonicalFamily(family) || 'GENERAL')
+                .input('family', sql.NVarChar, family ? family.trim() : 'General')
                 .input('department', sql.NVarChar, department ? department.trim() : 'General')
                 .input('taskName', sql.NVarChar, taskName.trim())
-                .input('userId', sql.NVarChar, resolvedUserId)
+                .input('userId', sql.NVarChar, assignedUserId || null)
                 .input('status', sql.NVarChar, status || 'Pendiente')
                 .input('dueDate', sql.Date, dueDate ? new Date(dueDate) : null)
                 .input('comments', sql.NVarChar, comments || '')
                 .query(`
                     INSERT INTO implementation_tasks (
-                        id, ecn_id, family, department, task_name, assigned_user_id, status, due_date, comments, updated_at, created_at
+                        id, ecn_id, family, department, task_name, assigned_user_id, status, due_date, comments, updated_at
                     ) VALUES (
-                        @id, @ecnId, @family, @department, @taskName, @userId, @status, @dueDate, @comments, SYSDATETIME(), SYSUTCDATETIME()
+                        @id, @ecnId, @family, @department, @taskName, @userId, @status, @dueDate, @comments, SYSDATETIME()
                     )
                 `);
 
-            // The task remains saved if SMTP is unavailable; report delivery separately to avoid duplicate tasks on retry.
-            const notification = { sent: 0, failed: 0, warnings: [] as string[] };
-            if (!recipients.length) notification.warnings.push('No hay usuarios responsables para este departamento y familia.');
-            const h = escapeEmailHtml;
-            const rows = changes.map(change => `<tr>${[change.family, change.sku, change.assembly, change.old_component, change.new_component, change.old_subassembly, change.new_subassembly].map(value => `<td style="border:1px solid #ccc;padding:6px">${h(value || '—')}</td>`).join('')}</tr>`).join('');
-            let mailConfig: Awaited<ReturnType<typeof getEmailTransporter>> | undefined;
-            try {
-                if (recipients.some(user => user.email)) mailConfig = await getEmailTransporter();
-                for (const user of recipients) {
-                    if (!user.email) {
-                        notification.failed++;
-                        notification.warnings.push(`${user.name} no tiene correo configurado.`);
-                        continue;
-                    }
-                    try {
-                        const info = await mailConfig!.transporter.sendMail({
-                            from: `"${mailConfig!.fromName}" <${mailConfig!.from}>`,
-                            to: user.email,
-                            subject: `[ECN ${ecn.id}] Nueva tarea: ${taskName.trim()}`.replace(/[\r\n]/g, ' '),
-                            html: `<h2>Nueva tarea de implementación</h2><p>Hola ${h(user.name)}, se ha generado una tarea para usted.</p>
-                                <p><strong>ECN (cambio de ingeniería):</strong> ${h(ecn.id)} — ${h(ecn.description)}</p>
-                                <p><strong>Tarea:</strong> ${h(taskName.trim())}</p><p><strong>Departamento:</strong> ${h(department)}</p>
-                                <p><strong>Familias:</strong> ${h(taskFamilies.join(', ') || 'General')}</p>
-                                <p><strong>Fecha de vencimiento:</strong> ${h(dueDate || 'Sin fecha')}</p><p>${h(comments || '')}</p>
-                                <h3>Números de parte afectados por el ECN</h3><table style="border-collapse:collapse"><thead><tr>${['Familia', 'SKU', 'Ensamble', 'Componente viejo', 'Componente nuevo', 'Subensamble viejo', 'Subensamble nuevo'].map(label => `<th>${label}</th>`).join('')}</tr></thead><tbody>${rows || '<tr><td colspan="7">Sin números de parte registrados.</td></tr>'}</tbody></table>`
-                        });
-                        if (info.rejected?.length) throw new Error('Destinatario rechazado por SMTP');
-                        notification.sent++;
-                    } catch {
-                        notification.failed++;
-                        notification.warnings.push(`No se pudo enviar el correo a ${user.name}.`);
-                    }
-                }
-            } catch {
-                notification.failed = recipients.length;
-                notification.warnings.push('No se pudo iniciar el envío de correos. Revise la configuración SMTP.');
-            }
             res.status(201).json({
                 success: true,
                 message: 'Tarea de implementación creada correctamente',
-                id: taskId,
-                assignedUserId: resolvedUserId,
-                notification
+                id: taskId
             });
         } catch (e: any) {
             console.error('[API Create Task Error]', e);
@@ -6047,7 +6176,7 @@ pause
             await db.pool.request()
                 .input('id', sql.UniqueIdentifier, taskId)
                 .input('ecnId', sql.NVarChar, ecnId ? ecnId.trim() : null)
-                .input('family', sql.NVarChar, canonicalFamily(family) || null)
+                .input('family', sql.NVarChar, family ? family.trim() : null)
                 .input('department', sql.NVarChar, department ? department.trim() : null)
                 .input('taskName', sql.NVarChar, taskName ? taskName.trim() : null)
                 .input('status', sql.NVarChar, status || 'Pendiente')
@@ -6138,12 +6267,6 @@ pause
             }
             res.sendFile(path.join(distPath, 'index.html'));
         });
-    }
-
-    if (process.env.TASK_REMINDERS_ENABLED !== 'false') {
-        const reminderTimer = setInterval(() => { void checkTaskReminders(); }, 15 * 60 * 1000);
-        reminderTimer.unref();
-        void checkTaskReminders();
     }
 
     // Start listening AFTER all routes are registered

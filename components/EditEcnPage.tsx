@@ -66,9 +66,7 @@ const EditEcnPage: React.FC<EditEcnPageProps> = ({ users, onDataChange }) => {
             (change.oldComponent?.toLowerCase().includes(lowercasedFilter)) ||
             (change.newComponent?.toLowerCase().includes(lowercasedFilter)) ||
             (change.sku?.toLowerCase().includes(lowercasedFilter)) ||
-            (change.family?.toLowerCase().includes(lowercasedFilter)) ||
-            change.relatedSkus?.some(sku => sku.toLowerCase().includes(lowercasedFilter)) ||
-            change.relatedFamilies?.some(family => family.toLowerCase().includes(lowercasedFilter))
+            (change.family?.toLowerCase().includes(lowercasedFilter))
         );
     }, [ecn, componentSearch]);
 
@@ -219,8 +217,6 @@ const EditEcnPage: React.FC<EditEcnPageProps> = ({ users, onDataChange }) => {
             'COMP. NUEVO': c.newComponent,
             'SKU': c.sku || '',
             'FAMILIA': c.family || '',
-            'SKUS ASOCIADOS POR SMD': c.relatedProducts?.map(product => product.sku).join(', ') || '',
-            'FAMILIAS ASOCIADAS POR SMD': [...new Set(c.relatedProducts?.map(product => product.family) || [])].join(', '),
             'FECHA INICIO': c.startDate ? c.startDate.split('T')[0] : ''
         }));
         const worksheet = XLSX.utils.json_to_sheet(dataToExport);
@@ -359,14 +355,8 @@ const EditEcnPage: React.FC<EditEcnPageProps> = ({ users, onDataChange }) => {
                                             <option value="5731">5731</option>
                                         </select>
                                     </td>
-                                    <td className="px-2 py-2">
-                                        <input value={change.sku || ''} onChange={e => handleComponentChange(change.id, 'sku', e.target.value)} className={`${inputClass} w-28`} />
-                                        {!!change.relatedProducts?.length && <p className="mt-1 text-xs text-muted-foreground max-w-xs">Por SMD: {change.relatedProducts.map(product => product.sku).join(', ')}</p>}
-                                    </td>
-                                    <td className="px-2 py-2">
-                                        <input value={change.family || ''} onChange={e => handleComponentChange(change.id, 'family', e.target.value)} className={`${inputClass} w-28`} />
-                                        {!!change.relatedProducts?.length && <p className="mt-1 text-xs text-muted-foreground">Por SMD: {[...new Set(change.relatedProducts.map(product => product.family))].join(', ')}</p>}
-                                    </td>
+                                    <td className="px-2 py-2"><input value={change.sku || ''} onChange={e => handleComponentChange(change.id, 'sku', e.target.value)} className={`${inputClass} w-28`} /></td>
+                                    <td className="px-2 py-2"><input value={change.family || ''} onChange={e => handleComponentChange(change.id, 'family', e.target.value)} className={`${inputClass} w-28`} /></td>
                                     <td className="px-2 py-2"><input type="date" value={formatDateForDisplay(change.startDate)} onChange={e => handleComponentChange(change.id, 'startDate', e.target.value)} className={inputClass} /></td>
                                     <td className="px-2 py-2">
                                         <Button variant="danger" onClick={() => removeComponentChange(change.id)}>Eliminar</Button>

@@ -20,9 +20,6 @@ export enum ActionStatus {
 
 
 export interface ComponentChange {
-  relatedProducts?: { sku: string; family: string }[];
-  relatedSkus?: string[];
-  relatedFamilies?: string[];
   id: string;
   assembly: string;
   assemblyRevision?: string;
@@ -125,8 +122,6 @@ export interface ECN {
 }
 
 export interface User {
-  taskRole?: '' | 'engineering-change-coordinator';
-  families?: string[];
   id: string;
   name: string;
   email: string;
@@ -255,5 +250,4 @@ export interface ImplementationTask {
     dueDate: string;
     comments: string;
     updatedAt: string;
-    createdAt?: string | null;
 }

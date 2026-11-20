@@ -1,10 +1,6 @@
 import sql from 'mssql';
 import { v4 as uuidv4 } from 'uuid';
 import { CHECKLIST_TEMPLATE } from './services/checklistTemplate.ts';
-import { canonicalFamily } from './services/families.ts';
-import { parseUserFamilies } from './services/taskOwnership.ts';
-import { PRODUCT_FAMILY_CATALOG, PRODUCT_FAMILY_UPDATE_SQL, productFamily } from './services/productFamilies.ts';
-import { SMD_PRODUCT_CATALOG, SMD_LINK_VIEW_SQL, smdBase } from './services/smdProducts.ts';
 
 // --- MS SQL Server Configuration ---
 let rawServer = process.env.DB_HOST || '6.tcp.ngrok.io,29375';
@@ -42,7 +38,7 @@ let isInitialized = false;
 
 // --- In-Memory Store for Standalone / Preview / Offline Mode ---
 export interface MemoryStore {
-    users: Array<{ id: string; name: string; email?: string; department?: string; photo?: string; taskRole?: string; families?: string }>;
+    users: Array<{ id: string; name: string; email?: string; department?: string; photo?: string }>;
     ecns: Array<{
         id: string;
         initiator: string;
@@ -151,7 +147,6 @@ export interface MemoryStore {
         due_date: string;
         comments: string;
         updated_at: string;
-        created_at?: string;
     }>;
 }
 
@@ -392,8 +387,6 @@ class MemoryRequest {
                 if (inputs.email !== undefined) user.email = inputs.email;
                 if (inputs.dept !== undefined) user.department = inputs.dept;
                 if (inputs.photo !== undefined) user.photo = inputs.photo;
-                if (inputs.taskRole !== undefined) user.taskRole = inputs.taskRole;
-                if (inputs.families !== undefined) user.families = inputs.families;
             }
             return { recordset: [], rowsAffected: [user ? 1 : 0] };
         }
@@ -403,7 +396,7 @@ class MemoryRequest {
             const id = inputs.id || inputs.uid || `user-${Date.now()}`;
             const name = inputs.name || inputs.uname || id;
             if (!memoryStore.users.some(u => u.id === id)) {
-                memoryStore.users.push({ id, name, department: inputs.dept || 'General', email: inputs.email, photo: inputs.photo, taskRole: inputs.taskRole, families: inputs.families });
+                memoryStore.users.push({ id, name, department: 'General' });
             }
             return { recordset: [], rowsAffected: [1] };
         }
@@ -510,7 +503,7 @@ class MemoryRequest {
                 new_subassembly_revision: inputs.new_sub_rev || inputs.newSubassemblyRevision,
                 new_subassembly_description: inputs.new_sub_desc || inputs.newSubassemblyDescription,
                 sku: inputs.sku || '',
-                family: productFamily(inputs.sku, inputs.assembly) || canonicalFamily(inputs.family),
+                family: inputs.family || '',
                 demand: inputs.demand || 0,
                 on_hand_inventory: inputs.on_hand || inputs.onHandInventory || 0,
                 open_po_qty: inputs.open_po || inputs.openPoQty || 0,
@@ -534,7 +527,6 @@ class MemoryRequest {
                 if (inputs.open_po !== undefined) change.open_po_qty = inputs.open_po;
                 if (inputs.sdate !== undefined) change.start_date = inputs.sdate;
                 if (inputs.site !== undefined) change.site = inputs.site;
-                change.family = productFamily(change.sku, change.assembly) || canonicalFamily(change.family);
             }
             return { recordset: [], rowsAffected: [change ? 1 : 0] };
         }
@@ -661,8 +653,7 @@ class MemoryRequest {
                     status: t.status,
                     dueDate: t.due_date,
                     comments: t.comments,
-                    updatedAt: t.updated_at,
-                    createdAt: t.created_at || null
+                    updatedAt: t.updated_at
                 };
             });
             if (inputs.family) {
@@ -696,8 +687,7 @@ class MemoryRequest {
                 status: inputs.status || 'Pendiente',
                 due_date: inputs.dueDate ? (inputs.dueDate instanceof Date ? inputs.dueDate.toISOString().split('T')[0] : String(inputs.dueDate)) : '',
                 comments: inputs.comments || '',
-                updated_at: new Date().toISOString(),
-                created_at: new Date().toISOString()
+                updated_at: new Date().toISOString()
             };
             memoryStore.implementation_tasks.push(newTask);
             return { recordset: [], rowsAffected: [1] };
@@ -832,11 +822,6 @@ async function ensureTablesExist(p: sql.ConnectionPool): Promise<void> {
                 photo NVARCHAR(MAX)
             );
 
-            IF COL_LENGTH('dbo.users', 'taskRole') IS NULL
-                ALTER TABLE dbo.users ADD taskRole NVARCHAR(100) NULL;
-            IF COL_LENGTH('dbo.users', 'families') IS NULL
-                ALTER TABLE dbo.users ADD families NVARCHAR(MAX) NULL;
-
             IF OBJECT_ID('dbo.ecns', 'U') IS NULL
             CREATE TABLE dbo.ecns (
                 id NVARCHAR(100) PRIMARY KEY,
@@ -966,115 +951,8 @@ async function ensureTablesExist(p: sql.ConnectionPool): Promise<void> {
                 comments NVARCHAR(MAX),
                 updated_at DATETIME2 DEFAULT SYSDATETIME()
             );
-            IF COL_LENGTH('dbo.implementation_tasks', 'created_at') IS NULL
-                ALTER TABLE dbo.implementation_tasks ADD created_at DATETIME2 NULL
-                    CONSTRAINT DF_implementation_tasks_created_at DEFAULT SYSUTCDATETIME();
-
-            IF OBJECT_ID('dbo.task_reminder_deliveries', 'U') IS NULL
-            CREATE TABLE dbo.task_reminder_deliveries (
-                task_id UNIQUEIDENTIFIER NOT NULL,
-                due_date DATE NOT NULL,
-                days_before INT NOT NULL,
-                user_id NVARCHAR(100) NOT NULL,
-                claim_token UNIQUEIDENTIFIER NOT NULL,
-                attempted_at DATETIME2 NOT NULL,
-                sent_at DATETIME2 NULL,
-                CONSTRAINT PK_task_reminder_deliveries PRIMARY KEY (task_id, due_date, days_before, user_id)
-            );
         `);
-        await p.request().query(`
-            IF OBJECT_ID('dbo.product_family_catalog', 'U') IS NULL
-            CREATE TABLE dbo.product_family_catalog (
-                product NVARCHAR(100) NOT NULL PRIMARY KEY,
-                family NVARCHAR(100) NOT NULL
-            );
-            IF OBJECT_ID('dbo.smd_product_catalog', 'U') IS NULL
-            CREATE TABLE dbo.smd_product_catalog (
-                smd NVARCHAR(100) NOT NULL,
-                smd_base NVARCHAR(100) NOT NULL,
-                product NVARCHAR(100) NOT NULL,
-                CONSTRAINT PK_smd_product_catalog PRIMARY KEY (smd, product)
-            );
-            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_smd_product_catalog_base' AND object_id=OBJECT_ID('dbo.smd_product_catalog'))
-                CREATE INDEX IX_smd_product_catalog_base ON dbo.smd_product_catalog(smd_base) INCLUDE(product);
-        `);
-        const transaction = new sql.Transaction(p);
-        await transaction.begin();
-        if ((transaction as any).isMemory) throw new Error('No se pudo iniciar la transacción SQL del catálogo de familias.');
-        try {
-            const seed = transaction.request();
-            const values = PRODUCT_FAMILY_CATALOG.map((row, index) => {
-                seed.input(`product${index}`, sql.NVarChar, row.product).input(`family${index}`, sql.NVarChar, canonicalFamily(row.family));
-                return `(@product${index}, @family${index})`;
-            });
-            await seed.query(`
-                MERGE dbo.product_family_catalog WITH (HOLDLOCK) AS target
-                USING (VALUES ${values.join(',')}) AS source (product, family) ON target.product=source.product
-                WHEN NOT MATCHED THEN INSERT (product, family) VALUES (source.product, source.family);
-            `);
-            const smdSeed = transaction.request();
-            const smdValues = SMD_PRODUCT_CATALOG.map((row, index) => {
-                smdSeed.input(`smd${index}`, sql.NVarChar, row.smd).input(`base${index}`, sql.NVarChar, smdBase(row.smd)).input(`sku${index}`, sql.NVarChar, row.product);
-                return `(@smd${index}, @base${index}, @sku${index})`;
-            });
-            await smdSeed.query(`
-                MERGE dbo.smd_product_catalog WITH (HOLDLOCK) AS target
-                USING (VALUES ${smdValues.join(',')}) source(smd,smd_base,product)
-                ON target.smd=source.smd AND target.product=source.product
-                WHEN NOT MATCHED THEN INSERT (smd,smd_base,product) VALUES (source.smd,source.smd_base,source.product);
-            `);
-            for (const table of ['product_family_catalog', 'component_changes', 'implementation_tasks']) {
-                await transaction.request().query(`
-                    UPDATE dbo.${table} SET family = UPPER(LTRIM(RTRIM(REPLACE(REPLACE(REPLACE(family, CHAR(9), ' '), CHAR(13), ' '), CHAR(10), ' ')))) WHERE family IS NOT NULL;
-                    WHILE EXISTS (SELECT 1 FROM dbo.${table} WHERE family LIKE '%  %')
-                        UPDATE dbo.${table} SET family = REPLACE(family, '  ', ' ') WHERE family LIKE '%  %';
-                `);
-                const families = await transaction.request().query(`SELECT DISTINCT family FROM dbo.${table} WHERE family IS NOT NULL`);
-                for (const row of families.recordset) {
-                    const canonical = canonicalFamily(row.family);
-                    if (canonical !== row.family) await transaction.request()
-                        .input('oldFamily', sql.NVarChar, row.family).input('newFamily', sql.NVarChar, canonical)
-                        .query(`UPDATE dbo.${table} SET family=@newFamily WHERE family=@oldFamily`);
-                }
-            }
-            const users = await transaction.request().query('SELECT id, families FROM dbo.users WHERE families IS NOT NULL');
-            for (const user of users.recordset) {
-                const families = JSON.stringify(parseUserFamilies(user.families));
-                if (families !== user.families) await transaction.request()
-                    .input('id', sql.NVarChar, user.id).input('families', sql.NVarChar, families)
-                    .query('UPDATE dbo.users SET families=@families WHERE id=@id');
-            }
-            const applied = await transaction.request().query(PRODUCT_FAMILY_UPDATE_SQL);
-            await transaction.commit();
-            console.log(`[DB] Product/SBU: ${applied.rowsAffected[0] || 0} component records updated.`);
-        } catch (error) {
-            await transaction.rollback();
-            throw error;
-        }
-        await p.request().query(`
-            IF OBJECT_ID('dbo.tr_component_changes_product_family', 'TR') IS NULL
-                EXEC('CREATE TRIGGER dbo.tr_component_changes_product_family ON dbo.component_changes AFTER INSERT, UPDATE AS BEGIN SET NOCOUNT ON; END');
-        `);
-        await p.request().query(`
-            ALTER TRIGGER dbo.tr_component_changes_product_family ON dbo.component_changes AFTER INSERT, UPDATE AS
-            BEGIN
-                SET NOCOUNT ON;
-                IF TRIGGER_NESTLEVEL(OBJECT_ID('dbo.tr_component_changes_product_family')) > 1 RETURN;
-                UPDATE c SET family=COALESCE(skuMatch.family, assemblyMatch.family)
-                FROM dbo.component_changes c
-                INNER JOIN inserted i ON i.id=c.id
-                LEFT JOIN dbo.product_family_catalog skuMatch ON UPPER(LTRIM(RTRIM(c.sku)))=skuMatch.product
-                LEFT JOIN dbo.product_family_catalog assemblyMatch ON UPPER(LTRIM(RTRIM(c.assembly)))=assemblyMatch.product
-                WHERE COALESCE(skuMatch.family, assemblyMatch.family) IS NOT NULL
-                    AND ISNULL(c.family,'') COLLATE Latin1_General_100_BIN2 <> COALESCE(skuMatch.family, assemblyMatch.family) COLLATE Latin1_General_100_BIN2;
-            END
-        `);
-        await p.request().query(`
-            IF OBJECT_ID('dbo.component_change_smd_products','V') IS NULL
-                EXEC('CREATE VIEW dbo.component_change_smd_products AS SELECT CAST(NULL AS UNIQUEIDENTIFIER) AS changeId WHERE 1=0');
-        `);
-        await p.request().query(SMD_LINK_VIEW_SQL);
-        console.log('[DB] Verified schema and applied Product/SBU/SMD relationships.');
+        console.log('[DB] Verified core schema tables in MSSQL.');
     } catch (err: any) {
         console.warn('[DB] Note during schema check:', err.message);
     }
@@ -1111,9 +989,6 @@ export const init = async (): Promise<boolean> => {
         isDbAvailable = false;
         isInitialized = true;
         console.warn(`[DB] Live MSSQL connection skipped (${err.message || 'Offline'}). Operating in integrated high-performance mode.`);
-        memoryStore.component_changes.forEach(change => { change.family = productFamily(change.sku, change.assembly) || canonicalFamily(change.family); });
-        memoryStore.implementation_tasks.forEach(task => { task.family = canonicalFamily(task.family); });
-        memoryStore.users.forEach(user => { if (user.families) user.families = JSON.stringify(parseUserFamilies(user.families)); });
         if (resolveReady) resolveReady(true);
         return true;
     }

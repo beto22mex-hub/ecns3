@@ -68,6 +68,31 @@ export const SapWebGuiImporter: React.FC<SapWebGuiImporterProps> = ({ onImport, 
         updatedCount?: number;
     } | null>(null);
 
+    const [cs15Loading, setCs15Loading] = useState(false);
+    const [cs15Result, setCs15Result] = useState<any>(null);
+
+    const handleRunCs15Sync = async () => {
+        setCs15Loading(true);
+        setCs15Result(null);
+        try {
+            const res = await fetch('/api/sap/sync-cs15-skus', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await res.json();
+            if (data.success) {
+                setCs15Result(data);
+                setNotification({ message: data.message || 'CS15 ejecutado exitosamente.', type: 'success' });
+            } else {
+                setNotification({ message: data.error || 'Error ejecutando CS15.', type: 'error' });
+            }
+        } catch (e: any) {
+            setNotification({ message: e.message || 'Error de conexión con el servidor.', type: 'error' });
+        } finally {
+            setCs15Loading(false);
+        }
+    };
+
     // Format date for SAP parameters (DD.MM.YYYY)
     const formatSapDate = (isoDate: string) => {
         if (!isoDate) return '';
@@ -1049,6 +1074,88 @@ pause >nul
                     updatedCount={importProgress.updatedCount}
                 />
             )}
+            {/* Tarjeta CS15 Where-Used Ensambles con A */}
+            <div className="mt-6">
+                <Card className="border-l-4 border-l-purple-600 shadow-sm bg-purple-50/30">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-gray-200">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center text-purple-700 text-xl font-bold">
+                                ⚙️
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <h2 className="text-lg font-bold text-gray-800">Automatización CS15: Ensambles con "A" (SKU por Nivel Máximo)</h2>
+                                    <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-purple-100 text-purple-800 border border-purple-200">
+                                        Transacción CS15
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-600">
+                                    Ejecuta CS15 para cada ensamble que inicia con la letra "A", hace clic en pantalla siguiente, llena los parámetros (01.01.2026, Centro 5205, Lista variable, A var.niv.), ejecuta y extrae el componente con el mayor nivel (Nv.) como SKU.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                            <a
+                                href="/api/sap/download-cs15-bat"
+                                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                                download="sync_cs15.bat"
+                            >
+                                <span>📥</span>
+                                <span>Descargar .BAT (CS15)</span>
+                            </a>
+                            <a
+                                href="/api/sap/download-cs15-vbs"
+                                className="px-3 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded text-xs font-semibold shadow transition-colors flex items-center gap-1.5"
+                                download="sync_cs15_skus.vbs"
+                            >
+                                <span>📜</span>
+                                <span>Descargar .VBS</span>
+                            </a>
+                            <Button
+                                variant="primary"
+                                onClick={handleRunCs15Sync}
+                                disabled={cs15Loading}
+                                className="!bg-purple-600 hover:!bg-purple-700 text-xs !py-2 font-semibold flex items-center gap-1.5"
+                            >
+                                {cs15Loading ? 'Ejecutando CS15...' : '🚀 Ejecutar CS15 (Local Windows)'}
+                            </Button>
+                        </div>
+                    </div>
+
+                    {cs15Result && (
+                        <div className="mt-4 p-4 bg-white rounded-lg border border-purple-200 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <h3 className="font-bold text-sm text-purple-900">Resultado de Ejecución CS15</h3>
+                                <span className="text-xs font-mono bg-purple-100 text-purple-800 px-2 py-0.5 rounded">
+                                    Actualizados: {cs15Result.updatedCount || cs15Result.updates?.length || 0}
+                                </span>
+                            </div>
+                            <p className="text-xs text-gray-700">{cs15Result.message}</p>
+                            {cs15Result.updates && cs15Result.updates.length > 0 && (
+                                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded">
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="bg-gray-100 text-gray-700">
+                                            <tr>
+                                                <th className="p-2">Ensamble (A...)</th>
+                                                <th className="p-2">SKU (Nivel Máximo)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {cs15Result.updates.map((u: any, idx: number) => (
+                                                <tr key={idx} className="border-t border-gray-100 hover:bg-gray-50">
+                                                    <td className="p-2 font-mono font-bold text-blue-700">{u.assembly}</td>
+                                                    <td className="p-2 font-mono font-bold text-emerald-700">{u.sku}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </Card>
+            </div>
         </Card>
     );
 };

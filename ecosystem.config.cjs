@@ -18,12 +18,12 @@ module.exports = {
       windowsHide: true,
       env: {
         NODE_ENV: 'production',
-        PORT: 3001,
+        PORT: 3000,
         AZURE_AUTH_ENABLED: process.env.AZURE_AUTH_ENABLED || 'false',
       },
       env_production: {
         NODE_ENV: 'production',
-        PORT: 3001,
+        PORT: 3000,
         FORCE_HTTPS: 'false',
         AZURE_AUTH_ENABLED: process.env.AZURE_AUTH_ENABLED || 'false',
       },

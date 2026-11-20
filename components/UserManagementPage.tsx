@@ -1,8 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import * as api from '../services/api';
-import { CHANGE_COORDINATOR_ROLE, parseUserFamilies } from '../services/taskOwnership';
-import { DEPARTMENTS, canonicalDepartment } from '../services/departments';
-import { canonicalFamily } from '../services/families';
+import React, { useState, useMemo } from 'react';
 import { User } from '../types';
 import { Card, Button, Toast, UserProfile, Modal } from './ui';
 import * as XLSX from 'xlsx';
@@ -43,8 +39,6 @@ const UserImporter: React.FC<UserImporterProps> = ({ onImport, setNotification }
                         if (normalizedKey === 'nombre') newRow['name'] = row[key];
                         else if (normalizedKey === 'correo') newRow['email'] = row[key];
                         else if (normalizedKey === 'departamento') newRow['department'] = row[key];
-                        else if (normalizedKey === 'familias' || normalizedKey === 'families') newRow['families'] = String(row[key] || '').split(';').map(item => item.trim()).filter(Boolean);
-                        else if (normalizedKey === 'rol de tareas' || normalizedKey === 'taskrole') newRow['taskRole'] = row[key];
                         else if (normalizedKey === 'foto' || normalizedKey === 'photo') newRow['photo'] = row[key];
                         else newRow[normalizedKey] = row[key];
                     }
@@ -87,9 +81,7 @@ const UserImporter: React.FC<UserImporterProps> = ({ onImport, setNotification }
             id: 'E123456', 
             name: 'John Doe', 
             email: 'john.doe@example.com', 
-            department: 'Ingeniería de Manufactura',
-            familias: 'VESDA; FAAST',
-            taskRole: '',
+            department: 'Engineering',
             foto: '/9j/4AAQSkZJRg... (pegar string base64 de la imagen JPG aquí)'
         }];
         const worksheet = XLSX.utils.json_to_sheet(data);
@@ -102,11 +94,6 @@ const UserImporter: React.FC<UserImporterProps> = ({ onImport, setNotification }
     return (
         <Card>
             <h2 className="text-xl font-semibold text-gray-800">Importar Usuarios</h2>
-            <details className="text-sm text-gray-600 my-2">
-                <summary className="cursor-pointer">Departamentos permitidos para la importación</summary>
-                <p className="mt-2">{DEPARTMENTS.join(', ')}.</p>
-            </details>
-            <p className="text-sm text-gray-600 my-2">Incluya familias separadas por punto y coma en la columna familias. Para coordinadores, use engineering-change-coordinator en taskRole.</p>
             <p className="text-sm text-gray-600 my-2">Importe usuarios desde un archivo Excel (.xlsx). El archivo debe contener las columnas 'id', 'name', 'email', 'department' y opcionalmente 'foto' (para imagen en base64).</p>
             <div className="flex items-center space-x-4 mt-4">
                  <label htmlFor="user-import" className="cursor-pointer bg-gray-200 text-gray-800 hover:bg-gray-300 px-4 py-2 rounded-md text-sm font-medium">
@@ -131,14 +118,6 @@ const UserManagementPage: React.FC<UserManagementPageProps> = ({ users, onUserIm
     const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
     const [editingUser, setEditingUser] = useState<User | null>(null);
     const [formData, setFormData] = useState<User | null>(null);
-    const [availableFamilies, setAvailableFamilies] = useState<string[]>([]);
-    const [newFamily, setNewFamily] = useState('');
-    useEffect(() => {
-        api.getAssemblySkuFamily().then(rows => {
-            setAvailableFamilies([...new Set(rows.map(row => String(row.family || '').trim()).filter(Boolean))].sort());
-        }).catch(() => setNotification({ message: 'No se pudo cargar el catálogo de familias. Puede agregarlas manualmente.', type: 'error' }));
-    }, []);
-    const familyOptions = [...new Set([...availableFamilies, ...users.flatMap(user => parseUserFamilies(user.families)), ...parseUserFamilies(formData?.families)])].sort();
 
     const filteredUsers = useMemo(() => {
         if (!search.trim()) return users;
@@ -147,17 +126,14 @@ const UserManagementPage: React.FC<UserManagementPageProps> = ({ users, onUserIm
             user.id.toLowerCase().includes(lowercasedSearch) ||
             user.name.toLowerCase().includes(lowercasedSearch) ||
             user.email.toLowerCase().includes(lowercasedSearch) ||
-            user.department.toLowerCase().includes(lowercasedSearch) ||
-            parseUserFamilies(user.families).some(family => family.toLowerCase().includes(lowercasedSearch)) ||
-            (user.taskRole === CHANGE_COORDINATOR_ROLE && 'coordinador de cambios de ingeniería'.includes(lowercasedSearch))
+            user.department.toLowerCase().includes(lowercasedSearch)
         );
     }, [users, search]);
     
     const handleEditClick = (user: User) => {
         setEditingUser(user);
-        setNewFamily('');
         // Deep copy to prevent mutating state directly while editing
-        setFormData({ ...JSON.parse(JSON.stringify(user)), department: canonicalDepartment(user.department) || '' });
+        setFormData(JSON.parse(JSON.stringify(user)));
     };
 
     const handleFormChange = (field: keyof User, value: string) => {
@@ -168,21 +144,13 @@ const UserManagementPage: React.FC<UserManagementPageProps> = ({ users, onUserIm
 
     const handleSave = async () => {
         if (!formData) return;
-        if (!canonicalDepartment(formData.department)) {
-            setNotification({ message: 'Seleccione un departamento del catálogo.', type: 'error' });
-            return;
-        }
-        if (!formData.families?.length) {
-            setNotification({ message: 'Asigne al menos una familia al usuario.', type: 'error' });
-            return;
-        }
         try {
             await onUpdateUser(formData);
             setNotification({ message: 'Usuario actualizado correctamente.', type: 'success' });
             setEditingUser(null);
             setFormData(null);
         } catch (error) {
-            setNotification({ message: error instanceof Error ? error.message : 'Error al actualizar el usuario.', type: 'error' });
+            setNotification({ message: 'Error al actualizar el usuario.', type: 'error' });
             console.error(error);
         }
     };
@@ -212,7 +180,7 @@ const UserManagementPage: React.FC<UserManagementPageProps> = ({ users, onUserIm
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                             <tr>
-                                {['ID', 'Nombre', 'Correo', 'Departamento', 'Rol de tareas', 'Familias a cargo', 'Acciones'].map(header => (
+                                {['ID', 'Nombre', 'Correo', 'Departamento', 'Acciones'].map(header => (
                                      <th key={header} scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{header}</th>
                                 ))}
                             </tr>
@@ -225,9 +193,7 @@ const UserManagementPage: React.FC<UserManagementPageProps> = ({ users, onUserIm
                                         <UserProfile user={user} />
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.email}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{canonicalDepartment(user.department) || `${user.department || 'Sin departamento'} (pendiente de estandarizar)`}</td>
-                                    <td className="px-6 py-4 text-sm text-gray-500">{user.taskRole === CHANGE_COORDINATOR_ROLE ? 'Coordinador de cambios de ingeniería' : 'Responsable de departamento'}</td>
-                                    <td className="px-6 py-4 text-sm text-gray-500">{parseUserFamilies(user.families).join(', ') || 'Sin familias asignadas'}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.department}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                                         <Button onClick={() => handleEditClick(user)}>Editar</Button>
                                     </td>
@@ -256,37 +222,8 @@ const UserManagementPage: React.FC<UserManagementPageProps> = ({ users, onUserIm
                         </div>
                         <div>
                             <label htmlFor="edit-department" className={labelClass}>Departamento</label>
-                            <select id="edit-department" value={formData.department} onChange={(e) => handleFormChange('department', e.target.value)} className={inputClass} required>
-                                <option value="" disabled>Seleccione un departamento</option>
-                                {DEPARTMENTS.map(department => <option key={department} value={department}>{department}</option>)}
-                            </select>
+                            <input id="edit-department" type="text" value={formData.department} onChange={(e) => handleFormChange('department', e.target.value)} className={inputClass} />
                         </div>
-                        <div>
-                            <label htmlFor="edit-task-role" className={labelClass}>Rol de tareas</label>
-                            <select id="edit-task-role" value={formData.taskRole || ''} onChange={e => setFormData({ ...formData, taskRole: e.target.value as User['taskRole'] })} className={inputClass}>
-                                <option value="">Responsable de departamento</option>
-                                <option value={CHANGE_COORDINATOR_ROLE}>Coordinador de cambios de ingeniería</option>
-                            </select>
-                        </div>
-                        <fieldset>
-                            <legend className={labelClass}>Familias a cargo (seleccione una o más)</legend>
-                            <div className="mt-2 max-h-40 overflow-y-auto space-y-2 border rounded-md p-3">
-                                {familyOptions.map(family => (
-                                    <label key={family} className="flex items-center gap-2 text-sm text-gray-700">
-                                        <input type="checkbox" checked={formData.families?.includes(family) || false} onChange={e => setFormData({ ...formData, families: e.target.checked ? [...(formData.families || []), family] : (formData.families || []).filter(item => item !== family) })} />
-                                        {family}
-                                    </label>
-                                ))}
-                            </div>
-                            <div className="flex gap-2 mt-2">
-                                <input aria-label="Agregar familia" placeholder="Otra familia..." value={newFamily} onChange={e => setNewFamily(e.target.value)} className={inputClass} />
-                                <Button variant="secondary" onClick={() => {
-                                    const family = canonicalFamily(newFamily);
-                                    if (family) setFormData({ ...formData, families: [...new Set([...(formData.families || []), family])] });
-                                    setNewFamily('');
-                                }}>Agregar</Button>
-                            </div>
-                        </fieldset>
                         <div>
                             <label htmlFor="edit-photo" className={labelClass}>Foto (Base64)</label>
                             <textarea id="edit-photo" rows={4} value={formData.photo || ''} onChange={(e) => handleFormChange('photo', e.target.value)} className={inputClass} placeholder="Pegue la cadena de texto base64 de la imagen aquí..."/>
