@@ -37,7 +37,7 @@ interface ModalProps {
     onClose: () => void;
     title: ReactNode;
     children: ReactNode;
-    size?: 'md' | 'lg' | 'xl' | '2xl' | 'full' | 'screen';
+    size?: 'md' | 'lg' | 'xl' | '2xl' | 'full' | 'screen' | 'wide';
 }
 export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'lg' }) => {
     if (!isOpen) return null;
@@ -48,7 +48,8 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
         xl: 'max-w-xl',
         '2xl': 'max-w-2xl',
         'full': 'max-w-6xl',
-        'screen': 'max-w-screen-xl'
+        'screen': 'max-w-screen-xl',
+        'wide': 'max-w-[96vw]'
     };
 
     return (

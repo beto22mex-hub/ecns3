@@ -7,10 +7,16 @@ import * as api from '../services/api';
 import { useTheme } from './ThemeContext';
 
 // --- Type definition for sortable columns ---
-type SortableKeys = keyof Pick<ECN, 'id' | 'initiator' | 'description' | 'status' | 'implementationDate'> | 'daysRemaining';
+type SortableKeys = keyof Pick<ECN, 'id' | 'initiator' | 'description' | 'status' | 'implementationDate' | 'familyList'> | 'daysRemaining';
 type GroupingKey = 'family' | 'sku' | 'assembly' | 'none';
 
 // --- Helper Functions ---
+const LoadingIndicator: React.FC<{ message?: string }> = ({ message = 'Cargando datos...' }) => (
+    <div role="status" aria-live="polite" className="flex items-center justify-center gap-3 px-5 py-8 text-sm text-muted-foreground">
+        <span aria-hidden="true" className="h-6 w-6 shrink-0 animate-spin rounded-full border-[3px] border-primary/20 border-t-primary" />
+        <div><p className="font-semibold text-foreground">{message}</p><p className="mt-0.5 text-xs">Por favor espere un momento.</p></div>
+    </div>
+);
 
 /**
  * Formats a date string from the API (expected to be ISO 8601 format) into 'YYYY-MM-DD'.
@@ -158,7 +164,9 @@ const EcnDetailModal: React.FC<EcnDetailModalProps> = ({ ecn, isOpen, onClose, o
         const lowercasedFilter = searchTerm.toLowerCase();
         return ecn.changes.filter(change =>
             (change.oldComponent?.toLowerCase().includes(lowercasedFilter)) ||
-            (change.newComponent?.toLowerCase().includes(lowercasedFilter))
+            (change.newComponent?.toLowerCase().includes(lowercasedFilter)) ||
+            change.relatedSkus?.some(sku => sku.toLowerCase().includes(lowercasedFilter)) ||
+            change.relatedFamilies?.some(family => family.toLowerCase().includes(lowercasedFilter))
         );
     }, [ecn, searchTerm]);
     
@@ -182,7 +190,7 @@ const EcnDetailModal: React.FC<EcnDetailModalProps> = ({ ecn, isOpen, onClose, o
         }
 
         const grouped = filteredChanges.reduce((acc, change) => {
-            const key = change[grouping as keyof Omit<ComponentChange, 'id'|'demand'|'onHandInventory'|'openPoQty'|'startDate'>] || 'Sin ' + grouping;
+            const key = String(change[grouping as keyof ComponentChange] || 'Sin ' + grouping);
             if (!acc[key as string]) {
                 (acc as any)[key] = [];
             }
@@ -211,6 +219,8 @@ const EcnDetailModal: React.FC<EcnDetailModalProps> = ({ ecn, isOpen, onClose, o
         const dataToExport = filteredChanges.map(change => ({
             'Familia': change.family || '—',
             'SKU': change.sku || '—',
+            'SKUs asociados por SMD': change.relatedProducts?.map(product => product.sku).join(', ') || '',
+            'Familias asociadas por SMD': [...new Set(change.relatedProducts?.map(product => product.family) || [])].join(', '),
             'Sitio': change.site || '—',
             'Ensamble': change.assembly,
             'Subensamble Viejo': change.oldSubassembly || '—',
@@ -248,8 +258,14 @@ const EcnDetailModal: React.FC<EcnDetailModalProps> = ({ ecn, isOpen, onClose, o
                 <td className="px-4 py-2 whitespace-nowrap text-sm text-muted-foreground">{change.site || '—'}</td>
                 <td className="px-4 py-2 whitespace-nowrap text-sm text-muted-foreground">{change.oldSubassembly || change.oldComponent || '—'}</td>
                 <td className="px-4 py-2 whitespace-nowrap text-sm text-muted-foreground">{change.newSubassembly || change.newComponent || '—'}</td>
-                <td className="px-4 py-2 whitespace-nowrap text-sm text-muted-foreground">{change.sku || '—'}</td>
-                <td className="px-4 py-2 whitespace-nowrap text-sm text-muted-foreground">{change.family || '—'}</td>
+                <td className="px-4 py-2 text-sm text-muted-foreground">
+                    {change.sku || '—'}
+                    {!!change.relatedProducts?.length && <p className="mt-1 text-xs max-w-xs">Por SMD: {change.relatedProducts.map(product => product.sku).join(', ')}</p>}
+                </td>
+                <td className="px-4 py-2 text-sm text-muted-foreground">
+                    {change.family || '—'}
+                    {!!change.relatedProducts?.length && <p className="mt-1 text-xs">Por SMD: {[...new Set(change.relatedProducts.map(product => product.family))].join(', ')}</p>}
+                </td>
                 <td className="px-4 py-2 whitespace-nowrap text-sm text-muted-foreground">{change.demand}</td>
                 <td className="px-4 py-2 whitespace-nowrap text-sm text-muted-foreground">{change.onHandInventory}</td>
                 <td className="px-4 py-2 whitespace-nowrap text-sm text-muted-foreground">{change.openPoQty}</td>
@@ -298,6 +314,8 @@ const EcnDetailModal: React.FC<EcnDetailModalProps> = ({ ecn, isOpen, onClose, o
             </table>
         );
     }
+
+    if (ecn.id === 'loading') return <Modal isOpen={isOpen} onClose={onClose} title="Detalle del ECN" size="full"><LoadingIndicator message="Cargando detalle del ECN..." /></Modal>;
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Detalle ECN ${ecn.id}`} size={isMaximized ? 'screen' : 'full'}>
@@ -444,10 +462,10 @@ const EcnNotesModal: React.FC<EcnNotesModalProps> = ({ ecn, isOpen, onClose, onN
     }, [ecn]);
 
     if (!isOpen) return null;
-    if (!ecn) {
+    if (!ecn || ecn.id === 'loading') {
         return (
             <Modal isOpen={true} onClose={onClose} title="Cargando...">
-                <div className="p-4 text-center">Cargando notas...</div>
+                <LoadingIndicator message="Cargando notas del ECN..." />
             </Modal>
         );
     }
@@ -560,6 +578,8 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
     const [ecns, setEcns] = useState<ECN[]>([]);
     const [chartData, setChartData] = useState<ECN[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isChartsLoading, setIsChartsLoading] = useState(true);
+    const [chartsError, setChartsError] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [search, setSearch] = useState('');
     const [status, setStatus] = useState('Todos');
@@ -576,6 +596,25 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
     const [descriptionModal, setDescriptionModal] = useState<{ isOpen: boolean; content: string, title: string }>({ isOpen: false, content: '', title: '' });
     const [familySearch, setFamilySearch] = useState('');
     const [familyViewMode, setFamilyViewMode] = useState<'cards' | 'table'>('cards');
+    const [selectedFamily, setSelectedFamily] = useState<string | null>(null);
+    const [familyModalStatus, setFamilyModalStatus] = useState<string>(ECNStatus.Pending);
+    const [familyModalSearch, setFamilyModalSearch] = useState('');
+    const openFamilyModal = (family: string) => {
+        setFamilyModalStatus(ECNStatus.Pending);
+        setFamilyModalSearch('');
+        setSelectedFamily(family);
+    };
+    const selectedFamilyEcns = useMemo(() => selectedFamily === null ? [] : chartData.filter(ecn => {
+        const families = ecn.familyList?.split(',').map(family => family.trim()).filter(Boolean) || [];
+        return (families.length ? families : ['Sin Familia']).includes(selectedFamily);
+    }), [selectedFamily, chartData]);
+    const visibleFamilyEcns = useMemo(() => {
+        const query = familyModalSearch.trim().toLocaleLowerCase('es');
+        return selectedFamilyEcns.filter(ecn =>
+            (familyModalStatus === 'Todos' || ecn.status === familyModalStatus) &&
+            (!query || [ecn.id, ecn.description, ecn.familyList, ecn.skuList].some(value => value?.toLocaleLowerCase('es').includes(query)))
+        );
+    }, [selectedFamilyEcns, familyModalStatus, familyModalSearch]);
     const { theme } = useTheme();
     const [areChartsVisible, setAreChartsVisible] = useState(() => {
         return localStorage.getItem('dashboardChartsVisible') !== 'false';
@@ -659,7 +698,7 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                 await Promise.allSettled(updatePromises);
     
                 // After all updates, refetch data to show the latest state.
-                fetchData(true); // Pass true to prevent loading spinner flash.
+                await fetchData(true); // Keep the loading state until refreshed records are available.
                 return; // Exit current execution to avoid setting state with stale data.
             }
             // --- End of Automatic Status Update Logic ---
@@ -700,6 +739,8 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
     }, [search, status, timeFilter, sortBy, sortDirection]);
 
     const fetchChartData = useCallback(async () => {
+        setIsChartsLoading(true);
+        setChartsError(null);
         try {
             const params: { [key: string]: any } = {};
              if (timeFilter.startsWith('year-')) {
@@ -711,11 +752,16 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
             setChartData(data);
         } catch(e) {
             console.error("Failed to fetch chart data:", e);
+            setChartsError('No se pudieron cargar las gráficas y las familias.');
+        } finally {
+            setIsChartsLoading(false);
         }
     }, [timeFilter]);
 
 
     useEffect(() => {
+        setIsLoading(true);
+        setIsChartsLoading(true);
         const handler = setTimeout(() => {
             fetchData();
             fetchChartData();
@@ -1110,6 +1156,7 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
             const initiatorUser = users.find(u => u.id === ecn.initiator);
             return {
                 'ECN': ecn.id,
+                'Familia(s)': ecn.familyList || 'Sin Familia',
                 'Iniciador': initiatorUser ? initiatorUser.name : ecn.initiator,
                 'Descripción': ecn.description,
                 'Estatus': ecn.status,
@@ -1129,6 +1176,7 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
     return (
         <div className="space-y-6">
              {notification && <Toast message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
+            {(isLoading || isChartsLoading) && <div className="sticky top-0 z-30 rounded-xl border border-primary/20 bg-card/95 shadow-sm backdrop-blur-sm"><LoadingIndicator message={isLoading && isChartsLoading ? 'Cargando dashboard y gráficas...' : isChartsLoading ? 'Actualizando gráficas y familias...' : 'Cargando registros de ECN...'} /></div>}
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-3">
                     <h1 className="text-3xl font-bold text-foreground">Dashboard de ECNs</h1>
@@ -1208,7 +1256,9 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                     </div>
                 </div>
 
-                {filteredFamilyEcnData.length === 0 ? (
+                {isChartsLoading ? <LoadingIndicator message="Cargando familias y sus ECNs..." /> : chartsError ? (
+                    <div className="py-6 text-center"><p className="mb-3 text-sm text-destructive">{chartsError}</p><Button onClick={() => fetchChartData()}>Reintentar</Button></div>
+                ) : filteredFamilyEcnData.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground text-sm">
                         No hay datos de familias para el período o búsqueda seleccionada.
                     </div>
@@ -1217,7 +1267,14 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                         {filteredFamilyEcnData.map(item => (
                             <div
                                 key={item.name}
-                                className="p-3.5 bg-muted/20 hover:bg-muted/40 border border-border rounded-xl flex flex-col justify-between transition-all hover:shadow-sm"
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`Ver los ${item.total} ECNs de ${item.name}`}
+                                onClick={() => openFamilyModal(item.name)}
+                                onKeyDown={event => {
+                                    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openFamilyModal(item.name); }
+                                }}
+                                className="p-3.5 bg-muted/20 hover:bg-muted/40 border border-border rounded-xl flex flex-col justify-between transition-all hover:shadow-sm cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
                             >
                                 <div>
                                     <div className="flex justify-between items-start gap-2 mb-2">
@@ -1326,7 +1383,13 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                             </thead>
                             <tbody className="divide-y divide-border bg-card">
                                 {filteredFamilyEcnData.map(item => (
-                                    <tr key={item.name} className="hover:bg-muted/30 transition-colors">
+                                    <tr key={item.name} role="button" tabIndex={0}
+                                        aria-label={`Ver los ${item.total} ECNs de ${item.name}`}
+                                        onClick={() => openFamilyModal(item.name)}
+                                        onKeyDown={event => {
+                                            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openFamilyModal(item.name); }
+                                        }}
+                                        className="hover:bg-muted/30 transition-colors cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
                                         <td className="px-4 py-2.5 font-bold text-foreground">{item.name}</td>
                                         <td className="px-4 py-2.5 text-center font-bold text-primary font-mono">{item.total}</td>
                                         <td className="px-4 py-2.5 text-center">
@@ -1374,8 +1437,10 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
             
             <div 
                 id="charts-container"
-                className={`transition-all duration-500 ease-in-out overflow-hidden ${areChartsVisible ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}
+                aria-busy={isChartsLoading}
+                className={`relative transition-all duration-500 ease-in-out overflow-hidden ${areChartsVisible ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}
             >
+                {(isChartsLoading || chartsError) && <div className="absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-background/90 backdrop-blur-sm">{isChartsLoading ? <LoadingIndicator message="Preparando gráficas..." /> : <div className="text-center"><p className="mb-3 text-sm text-destructive">{chartsError}</p><Button onClick={() => fetchChartData()}>Reintentar</Button></div>}</div>}
                  <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                     <Card className="lg:col-span-3">
                         <h3 className="text-lg font-semibold text-foreground mb-4">Resumen de ECNs por Estado</h3>
@@ -1464,7 +1529,7 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                 </div>
 
                  <div className="overflow-x-auto border-t pt-4 border-border">
-                    <table className="min-w-full divide-y divide-border">
+                    <table className="min-w-[1400px] w-full divide-y divide-border">
                         <thead className="bg-muted/50">
                             <tr>
                                 {([
@@ -1473,6 +1538,7 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                                     { key: 'daysRemaining', label: 'Días Restantes' },
                                     { key: 'initiator', label: 'Iniciador' },
                                     { key: 'description', label: 'Descripción' },
+                                    { key: 'familyList', label: 'Familia(s)' },
                                     { key: 'status', label: 'Estatus' },
                                 ] as { key: SortableKeys, label: string }[]).map(({ key, label }) => (
                                     <th key={key} scope="col" className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer" onClick={() => handleSort(key)}>
@@ -1484,10 +1550,10 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                         </thead>
                         <tbody className="bg-card divide-y divide-border">
                             {isLoading ? (
-                                <tr><td colSpan={7} className="text-center py-4">Cargando...</td></tr>
+                                <tr><td colSpan={8}><LoadingIndicator message="Cargando lista de ECNs..." /></td></tr>
                             ) : error ? (
                                 <tr>
-                                    <td colSpan={7} className="text-center py-8">
+                                    <td colSpan={8} className="text-center py-8">
                                         <p className="text-destructive mb-4">{error}</p>
                                         <Button onClick={() => fetchData()}>Intentar de nuevo</Button>
                                     </td>
@@ -1497,7 +1563,7 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                                     groupedEcnsByFamily.map(([family, items]) => (
                                         <React.Fragment key={family}>
                                             <tr>
-                                                <td colSpan={7} className="px-6 py-3 bg-muted font-bold text-foreground text-sm">
+                                                <td colSpan={8} className="px-6 py-3 bg-muted font-bold text-foreground text-sm">
                                                     Familia: {family} ({items.length} ECNs)
                                                 </td>
                                             </tr>
@@ -1522,6 +1588,7 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                                                                 {ecn.description || '—'}
                                                             </button>
                                                         </td>
+                                                        <td className="px-6 py-4 text-sm text-muted-foreground min-w-[160px] max-w-xs">{ecn.familyList || 'Sin Familia'}</td>
                                                         <td className="px-6 py-4 whitespace-nowrap text-sm"><StatusBadge status={ecn.status} /></td>
                                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                                                             <Button onClick={() => handleOpenDetails(ecn.id)}>Detalles</Button>
@@ -1543,7 +1610,7 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                                         </React.Fragment>
                                     ))
                                 ) : (
-                                    <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No se encontraron ECNs.</td></tr>
+                                    <tr><td colSpan={8} className="text-center py-4 text-muted-foreground">No se encontraron ECNs.</td></tr>
                                 )
                             ) : paginatedEcns.length > 0 ? (
                                 paginatedEcns.map(ecn => {
@@ -1567,6 +1634,7 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                                                     {ecn.description || '—'}
                                                 </button>
                                             </td>
+                                            <td className="px-6 py-4 text-sm text-muted-foreground min-w-[160px] max-w-xs">{ecn.familyList || 'Sin Familia'}</td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm"><StatusBadge status={ecn.status} /></td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                                                 <Button onClick={() => handleOpenDetails(ecn.id)}>Detalles</Button>
@@ -1586,13 +1654,69 @@ const Dashboard: React.FC<{ users: User[] }> = ({ users }) => {
                                     );
                                 })
                             ) : (
-                                <tr><td colSpan={7} className="text-center py-4 text-muted-foreground">No se encontraron ECNs.</td></tr>
+                                <tr><td colSpan={8} className="text-center py-4 text-muted-foreground">No se encontraron ECNs.</td></tr>
                             )}
                         </tbody>
                     </table>
                 </div>
                 {groupingMode === 'none' && <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />}
             </Card>
+
+            <Modal isOpen={selectedFamily !== null} onClose={() => setSelectedFamily(null)}
+                title={<span className="flex items-center gap-3"><span className="h-7 w-1 rounded-full bg-primary" />Cambios de ingeniería <span className="rounded-md border border-primary/20 bg-primary/10 px-2.5 py-1 text-sm font-bold text-primary">{selectedFamily}</span></span>} size="wide">
+                <div className="space-y-5">
+                    <div className="flex flex-col gap-4 rounded-xl border border-border bg-gradient-to-r from-muted/60 to-card p-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Seguimiento por familia</p>
+                            <h3 className="mt-1 text-xl font-bold text-foreground">ECNs de {selectedFamily}</h3>
+                            <p className="mt-1 text-sm text-muted-foreground">Periodo seleccionado en el dashboard. La vista inicia con los cambios pendientes.</p>
+                        </div>
+                        <div className="flex shrink-0 divide-x divide-border rounded-lg border border-border bg-card">
+                            <div className="px-5 py-3"><p className="text-xs text-muted-foreground">Pendientes</p><p className="text-2xl font-bold tabular-nums text-amber-600 dark:text-amber-400">{selectedFamilyEcns.filter(ecn => ecn.status === ECNStatus.Pending).length}</p></div>
+                            <div className="px-5 py-3"><p className="text-xs text-muted-foreground">Total de la familia</p><p className="text-2xl font-bold tabular-nums text-foreground">{selectedFamilyEcns.length}</p></div>
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                        <div className="w-full sm:w-64">
+                            <label htmlFor="family-modal-status" className="mb-1.5 block text-xs font-semibold text-muted-foreground">Estatus del ECN</label>
+                            <select id="family-modal-status" value={familyModalStatus} onChange={event => setFamilyModalStatus(event.target.value)} className="w-full rounded-lg border border-input bg-input px-3 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring">
+                                <option value={ECNStatus.Pending}>Pendientes</option>
+                                <option value={ECNStatus.PartialImplemented}>Implementados parcialmente</option>
+                                <option value={ECNStatus.Implemented}>Implementados</option>
+                                <option value={ECNStatus.Canceled}>Cancelados</option>
+                                <option value="Todos">Todos los estatus</option>
+                            </select>
+                        </div>
+                        <div className="flex-1">
+                            <label htmlFor="family-modal-search" className="mb-1.5 block text-xs font-semibold text-muted-foreground">Buscar en esta familia</label>
+                            <input id="family-modal-search" type="search" value={familyModalSearch} onChange={event => setFamilyModalSearch(event.target.value)} placeholder="Buscar ECN, descripción, familia o SKU..." className="w-full rounded-lg border border-input bg-input px-3 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
+                        </div>
+                        <p className="shrink-0 pb-2 text-xs text-muted-foreground" aria-live="polite"><strong className="text-foreground">{visibleFamilyEcns.length}</strong> de {selectedFamilyEcns.length} ECNs</p>
+                    </div>
+                <div className="max-h-[48vh] overflow-auto rounded-xl border border-border">
+                    <table className="w-full min-w-[1100px] divide-y divide-border text-sm">
+                        <thead className="sticky top-0 z-10 bg-muted shadow-sm">
+                            <tr>{['ECN', 'Descripción del cambio', 'Familia(s)', 'SKU(s) afectados', 'Implementación', 'Estatus', ''].map(label => <th key={label} scope="col" className="px-4 py-3.5 text-left text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{label || <span className="sr-only">Acciones</span>}</th>)}</tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                            {isChartsLoading ? <tr><td colSpan={7}><LoadingIndicator message="Actualizando ECNs de la familia..." /></td></tr> : visibleFamilyEcns.map(ecn => (
+                                <tr key={ecn.id} className="align-top odd:bg-card even:bg-muted/10 hover:bg-primary/5 transition-colors">
+                                    <td className="px-4 py-4 whitespace-nowrap"><button onClick={() => handleOpenDetails(ecn.id)} className="font-mono font-bold text-primary hover:underline">{ecn.id}</button></td>
+                                    <td className="px-4 py-4 min-w-[260px] max-w-md font-medium leading-relaxed">{ecn.description || 'Sin descripción'}</td>
+                                    <td className="px-4 py-4 min-w-[160px]"><div className="flex flex-wrap gap-1">{(ecn.familyList || 'Sin Familia').split(',').map(family => <span key={family} className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium">{family.trim()}</span>)}</div></td>
+                                    <td className="px-4 py-4 max-w-xs text-xs leading-relaxed text-muted-foreground"><p className="line-clamp-3 break-words" title={ecn.skuList || ''}>{ecn.skuList || 'Sin SKUs registrados'}</p></td>
+                                    <td className="px-4 py-4 whitespace-nowrap font-mono text-xs text-muted-foreground">{formatDate(ecn.implementationDate)}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap"><StatusBadge status={ecn.status} /></td>
+                                    <td className="px-4 py-4 whitespace-nowrap"><Button variant="secondary" onClick={() => handleOpenDetails(ecn.id)}>Ver detalle →</Button></td>
+                                </tr>
+                            ))}
+                            {!isChartsLoading && !visibleFamilyEcns.length && <tr><td colSpan={7} className="px-4 py-12 text-center"><p className="font-semibold text-foreground">No hay ECNs que coincidan con los filtros</p><p className="mt-1 text-sm text-muted-foreground">Seleccione otro estatus o ajuste la búsqueda para consultar los demás cambios de esta familia.</p></td></tr>}
+                        </tbody>
+                    </table>
+                </div>
+                <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted-foreground">Los demás estatus se muestran únicamente al seleccionarlos en el filtro.</p><Button variant="secondary" onClick={() => setSelectedFamily(null)}>Cerrar ventana</Button></div>
+                </div>
+            </Modal>
 
             <EcnDetailModal 
                 isOpen={isDetailModalOpen} 

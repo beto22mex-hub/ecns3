@@ -1,0 +1,1037 @@
+[
+    {
+        "smd":  "A2511-001",
+        "family":  "AMCO",
+        "product":  "BEAMHK"
+    },
+    {
+        "smd":  "A3450-002",
+        "family":  "AMCO",
+        "product":  "COSMOD2W"
+    },
+    {
+        "smd":  "A3460-002",
+        "family":  "AMCO",
+        "product":  "COSMOD4W"
+    },
+    {
+        "smd":  "A3053-001",
+        "family":  "AMCO",
+        "product":  "MDL3R"
+    },
+    {
+        "smd":  "A3053-001",
+        "family":  "AMCO",
+        "product":  "MDL3W"
+    },
+    {
+        "smd":  "A4003-002",
+        "family":  "AMCO",
+        "product":  "MOD2W"
+    },
+    {
+        "smd":  "A5364-000",
+        "family":  "AMCO",
+        "product":  "RA100Z"
+    },
+    {
+        "smd":  "A5365-000",
+        "family":  "AMCO",
+        "product":  "RTS151"
+    },
+    {
+        "smd":  "A5363-000",
+        "family":  "AMCO",
+        "product":  "RTS151KEY"
+    },
+    {
+        "smd":  "A3155-004",
+        "family":  "AMCO",
+        "product":  "RTS2"
+    },
+    {
+        "smd":  "A3155-004",
+        "family":  "AMCO",
+        "product":  "RTS2-AOS"
+    },
+    {
+        "smd":  "A3229-001",
+        "family":  "AMCO",
+        "product":  "AOS"
+    },
+    {
+        "smd":  "A3874-001",
+        "family":  "AMCO",
+        "product":  "SD500-PS"
+    },
+    {
+        "smd":  "A3490-103",
+        "family":  "AMCO",
+        "product":  "AD4P120B"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "AD4SB"
+    },
+    {
+        "smd":  "A2716-006",
+        "family":  "AMCO",
+        "product":  "D2"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "D4120"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "D4120B"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "D4120W"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "D4240"
+    },
+    {
+        "smd":  "A3490-103",
+        "family":  "AMCO",
+        "product":  "D4P120"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "D4S"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "D4SB"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "DUCTSD"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "JCID4120B"
+    },
+    {
+        "smd":  "A3490-103",
+        "family":  "AMCO",
+        "product":  "JD4P120B"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "LD4120BX"
+    },
+    {
+        "smd":  "A3490-103",
+        "family":  "AMCO",
+        "product":  "LD4P120BX"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "LD4SB"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "P270-3000PL"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "PD4120B"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "YD4120B"
+    },
+    {
+        "smd":  "A3490-103",
+        "family":  "AMCO",
+        "product":  "YD4P120B"
+    },
+    {
+        "smd":  "A3794-001",
+        "family":  "AMCO",
+        "product":  "2D51"
+    },
+    {
+        "smd":  "A2392-000",
+        "family":  "AMCO",
+        "product":  "PR-1"
+    },
+    {
+        "smd":  "A2716-006",
+        "family":  "AMCO",
+        "product":  "2151"
+    },
+    {
+        "smd":  "A5947-002",
+        "family":  "AMCO",
+        "product":  "APB200-LF-WH"
+    },
+    {
+        "smd":  "A5472-007",
+        "family":  "AMCO",
+        "product":  "APB200-WH"
+    },
+    {
+        "smd":  "A3243-007",
+        "family":  "AMCO",
+        "product":  "B200S"
+    },
+    {
+        "smd":  "A3243-007",
+        "family":  "AMCO",
+        "product":  "B200S-IV"
+    },
+    {
+        "smd":  "A5491-006",
+        "family":  "AMCO",
+        "product":  "B200S-LF-IV"
+    },
+    {
+        "smd":  "A5491-006",
+        "family":  "AMCO",
+        "product":  "B200S-LF-WH"
+    },
+    {
+        "smd":  "A3239-007",
+        "family":  "AMCO",
+        "product":  "B200SR-IV"
+    },
+    {
+        "smd":  "A5488-005",
+        "family":  "AMCO",
+        "product":  "B200SR-LF-IV"
+    },
+    {
+        "smd":  "A5488-005",
+        "family":  "AMCO",
+        "product":  "B200SR-LF-WH"
+    },
+    {
+        "smd":  "A3239-007",
+        "family":  "AMCO",
+        "product":  "B200SR-WH"
+    },
+    {
+        "smd":  "A3243-007",
+        "family":  "AMCO",
+        "product":  "B200S-WH"
+    },
+    {
+        "smd":  "A3423-001",
+        "family":  "AMCO",
+        "product":  "B224BI-IV"
+    },
+    {
+        "smd":  "A3423-001",
+        "family":  "AMCO",
+        "product":  "B224BI-WH"
+    },
+    {
+        "smd":  "A3420-000",
+        "family":  "AMCO",
+        "product":  "B224RB-IV"
+    },
+    {
+        "smd":  "A3420-000",
+        "family":  "AMCO",
+        "product":  "B224RB-WH"
+    },
+    {
+        "smd":  "A6420-001",
+        "family":  "AV",
+        "product":  "SCWL-TILE"
+    },
+    {
+        "smd":  "A6420-001",
+        "family":  "AV",
+        "product":  "SPSCWL-TILE"
+    },
+    {
+        "smd":  "A6390-001",
+        "family":  "AV",
+        "product":  "SEP-SPSWL-P"
+    },
+    {
+        "smd":  "A9081-001",
+        "family":  "AV",
+        "product":  "HCRL-LF"
+    },
+    {
+        "smd":  "A9081-001",
+        "family":  "AV",
+        "product":  "HCWL-LF"
+    },
+    {
+        "smd":  "A9081-001",
+        "family":  "AV",
+        "product":  "HGRL-LF"
+    },
+    {
+        "smd":  "A9081-001",
+        "family":  "AV",
+        "product":  "HGWL-LF"
+    },
+    {
+        "smd":  "A3551-003",
+        "family":  "AV",
+        "product":  "HR-LF"
+    },
+    {
+        "smd":  "A9081-001",
+        "family":  "AV",
+        "product":  "HRL-LF"
+    },
+    {
+        "smd":  "A9081-001",
+        "family":  "AV",
+        "product":  "HWL-LF-BP10"
+    },
+    {
+        "smd":  "A6324-005",
+        "family":  "AV",
+        "product":  "P2RL-LF"
+    },
+    {
+        "smd":  "A6324-005",
+        "family":  "AV",
+        "product":  "P2WL-LF"
+    },
+    {
+        "smd":  "A9525-001",
+        "family":  "AV",
+        "product":  "PC2RLED-LF"
+    },
+    {
+        "smd":  "A6325-001",
+        "family":  "AV",
+        "product":  "PC2RL-LF"
+    },
+    {
+        "smd":  "A6325-001",
+        "family":  "AV",
+        "product":  "PC2WL-LF"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HCRL2-LF"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HCRL2-LF-BP10"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HCWL2-LF"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HCWL2-LF-BP10"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HGRL2-LF"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HGRL2-LF-BP10"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HGWL2-LF"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HGWL2-LF-BP10"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HRL2-LF"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HRL2-LF-BP10"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HWL2-LF"
+    },
+    {
+        "smd":  "A9726-000",
+        "family":  "AV",
+        "product":  "HWL2-LF-BP10"
+    },
+    {
+        "smd":  "A9526-001",
+        "family":  "AV",
+        "product":  "P2RLED-LF"
+    },
+    {
+        "smd":  "A9526-001",
+        "family":  "AV",
+        "product":  "P2WLED-LF"
+    },
+    {
+        "smd":  "A9525-001",
+        "family":  "AV",
+        "product":  "PC2WLED-LF"
+    },
+    {
+        "smd":  "A6212-005",
+        "family":  "AV",
+        "product":  "CHRL"
+    },
+    {
+        "smd":  "A6410-001",
+        "family":  "AV",
+        "product":  "CHSCRL"
+    },
+    {
+        "smd":  "A6410-001",
+        "family":  "AV",
+        "product":  "CHSCWL"
+    },
+    {
+        "smd":  "A6380-001",
+        "family":  "AV",
+        "product":  "CHSWL"
+    },
+    {
+        "smd":  "A6212-005",
+        "family":  "AV",
+        "product":  "CHWL"
+    },
+    {
+        "smd":  "A6194-005",
+        "family":  "AV",
+        "product":  "HGRL"
+    },
+    {
+        "smd":  "A6194-005",
+        "family":  "AV",
+        "product":  "HGWL"
+    },
+    {
+        "smd":  "A6194-005",
+        "family":  "AV",
+        "product":  "HRL"
+    },
+    {
+        "smd":  "A6194-005",
+        "family":  "AV",
+        "product":  "HWL"
+    },
+    {
+        "smd":  "A6196-002",
+        "family":  "AV",
+        "product":  "P4RL"
+    },
+    {
+        "smd":  "A6196-002",
+        "family":  "AV",
+        "product":  "P4WL"
+    },
+    {
+        "smd":  "A6204-002",
+        "family":  "AV",
+        "product":  "PC4RL"
+    },
+    {
+        "smd":  "A6204-002",
+        "family":  "AV",
+        "product":  "PC4WL"
+    },
+    {
+        "smd":  "A6390-001",
+        "family":  "AV",
+        "product":  "SWL-CLR-ALERT"
+    },
+    {
+        "smd":  "A2922-004",
+        "family":  "AV",
+        "product":  "APA151"
+    },
+    {
+        "smd":  "A3209-000",
+        "family":  "AV",
+        "product":  "HRK"
+    },
+    {
+        "smd":  "A2920-003",
+        "family":  "AV",
+        "product":  "MHR"
+    },
+    {
+        "smd":  "A2920-003",
+        "family":  "AV",
+        "product":  "MHW"
+    },
+    {
+        "smd":  "A6390-001",
+        "family":  "AV",
+        "product":  "SEP-SPSWL"
+    },
+    {
+        "smd":  "A3208-000",
+        "family":  "AV",
+        "product":  "SBHK"
+    },
+    {
+        "smd":  "A3214-000",
+        "family":  "AV",
+        "product":  "SPSWK"
+    },
+    {
+        "smd":  "A6432-004",
+        "family":  "AV",
+        "product":  "SPSCWL-BP10"
+    },
+    {
+        "smd":  "A6434-004",
+        "family":  "AV",
+        "product":  "SPSWL-CLR-ALRT-BP"
+    },
+    {
+        "smd":  "A6434-004",
+        "family":  "AV",
+        "product":  "SPWL"
+    },
+    {
+        "smd":  "A9685-004",
+        "family":  "AV",
+        "product":  "CHSCRLED"
+    },
+    {
+        "smd":  "A9685-004",
+        "family":  "AV",
+        "product":  "CHSCWLED"
+    },
+    {
+        "smd":  "A9459-004",
+        "family":  "AV",
+        "product":  "CHSRLED"
+    },
+    {
+        "smd":  "A9459-004",
+        "family":  "AV",
+        "product":  "CHSWLED"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2GRLED"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2GWLED"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2RLED"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2RLED-BP10"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2RLED-P"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2RLED-SP"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2WLED"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2WLED-B"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2WLED-BP10"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2WLED-P"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2WLED-SP"
+    },
+    {
+        "smd":  "A9695-004",
+        "family":  "AV",
+        "product":  "PC2RLED"
+    },
+    {
+        "smd":  "A9695-004",
+        "family":  "AV",
+        "product":  "PC2RLED-BP10"
+    },
+    {
+        "smd":  "A9695-004",
+        "family":  "AV",
+        "product":  "PC2WLED"
+    },
+    {
+        "smd":  "A9695-004",
+        "family":  "AV",
+        "product":  "PC2WLED-BP10"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCRLED"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCRLED-BP10"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCWLED"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCWLED-B"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCWLED-BP10"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCWLED-CLR-ALERT"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SGRLED"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SGWLED"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SRLED"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SRLED-BP10"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SRLED-P"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SRLED-SP"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SWLED"
+    },
+    {
+        "smd":  "A9084-100",
+        "family":  "AV",
+        "product":  "SWLED-ALERT"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SWLED-BP10"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SWLED-CLR-ALERT"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SWLED-P"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2GRKLED"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2GRKLED-P"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2GWKLED"
+    },
+    {
+        "smd":  "A9455-004",
+        "family":  "AV",
+        "product":  "P2GWKLED-P"
+    },
+    {
+        "smd":  "A9695-004",
+        "family":  "AV",
+        "product":  "PC2RKLED"
+    },
+    {
+        "smd":  "A9695-004",
+        "family":  "AV",
+        "product":  "PC2WKLED"
+    },
+    {
+        "smd":  "A9695-004",
+        "family":  "AV",
+        "product":  "PC2WKLED-P"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCRKLED"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCRKLED-P"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCWKLED"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCWKLED-P"
+    },
+    {
+        "smd":  "A9084-200",
+        "family":  "AV",
+        "product":  "SGBKLED"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SGRKLED"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SGRKLED-P"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SGWKLED"
+    },
+    {
+        "smd":  "A9457-004",
+        "family":  "AV",
+        "product":  "SGWKLED-P"
+    },
+    {
+        "smd":  "A9699-004",
+        "family":  "AV",
+        "product":  "SPSCWKLED"
+    },
+    {
+        "smd":  "A9699-004",
+        "family":  "AV",
+        "product":  "SPSCWKLED-CLR-ALRT"
+    },
+    {
+        "smd":  "A9699-004",
+        "family":  "AV",
+        "product":  "SPSCWKLED-P"
+    },
+    {
+        "smd":  "A9458-004",
+        "family":  "AV",
+        "product":  "SPSRKLED"
+    },
+    {
+        "smd":  "A9458-004",
+        "family":  "AV",
+        "product":  "SPSRKLED-P"
+    },
+    {
+        "smd":  "A9458-004",
+        "family":  "AV",
+        "product":  "SPSWKLED"
+    },
+    {
+        "smd":  "A9458-004",
+        "family":  "AV",
+        "product":  "SPSWKLED-CLR-ALERT"
+    },
+    {
+        "smd":  "A9458-004",
+        "family":  "AV",
+        "product":  "SPSWKLED-P"
+    },
+    {
+        "smd":  "A9698-005",
+        "family":  "AV",
+        "product":  "SPSCRLED"
+    },
+    {
+        "smd":  "A9698-005",
+        "family":  "AV",
+        "product":  "SPSCRLED-BP10"
+    },
+    {
+        "smd":  "A9698-005",
+        "family":  "AV",
+        "product":  "SPSCWLED"
+    },
+    {
+        "smd":  "A9698-005",
+        "family":  "AV",
+        "product":  "SPSCWLED-BP10"
+    },
+    {
+        "smd":  "A9698-005",
+        "family":  "AV",
+        "product":  "SPSCWLED-CLR-ALERT"
+    },
+    {
+        "smd":  "A9698-005",
+        "family":  "AV",
+        "product":  "SPSCWLED-P"
+    },
+    {
+        "smd":  "A9698-005",
+        "family":  "AV",
+        "product":  "SPSCWLED-SP"
+    },
+    {
+        "smd":  "A9037-005",
+        "family":  "AV",
+        "product":  "SPSRLED"
+    },
+    {
+        "smd":  "A9037-005",
+        "family":  "AV",
+        "product":  "SPSRLED-BP10"
+    },
+    {
+        "smd":  "A9037-005",
+        "family":  "AV",
+        "product":  "SPSRLED-P"
+    },
+    {
+        "smd":  "A9037-005",
+        "family":  "AV",
+        "product":  "SPSRLED-SP"
+    },
+    {
+        "smd":  "A9037-005",
+        "family":  "AV",
+        "product":  "SPSWLED"
+    },
+    {
+        "smd":  "A9037-005",
+        "family":  "AV",
+        "product":  "SPSWLED-ALERT"
+    },
+    {
+        "smd":  "A9037-005",
+        "family":  "AV",
+        "product":  "SPSWLED-BP10"
+    },
+    {
+        "smd":  "A9037-005",
+        "family":  "AV",
+        "product":  "SPSWLED-CLR-ALERT"
+    },
+    {
+        "smd":  "A9037-005",
+        "family":  "AV",
+        "product":  "SPSWLED-P"
+    },
+    {
+        "smd":  "A9697-004",
+        "family":  "AV",
+        "product":  "SCRLED-P"
+    },
+    {
+        "smd":  "A5780-002",
+        "family":  "SECURITY",
+        "product":  "5193SD"
+    },
+    {
+        "smd":  "A5780-002",
+        "family":  "SECURITY",
+        "product":  "5193SDT"
+    },
+    {
+        "smd":  "A3602-007",
+        "family":  "SECURITY",
+        "product":  "CO1224T"
+    },
+    {
+        "smd":  "A3602-007",
+        "family":  "SECURITY",
+        "product":  "CO1224TR"
+    },
+    {
+        "smd":  "A3970-005",
+        "family":  "SECURITY",
+        "product":  "W3-CO"
+    },
+    {
+        "smd":  "A3446-002",
+        "family":  "SECURITY",
+        "product":  "CO-REPL"
+    },
+    {
+        "smd":  "A3429-008",
+        "family":  "SECURITY",
+        "product":  "COSMO-2W"
+    },
+    {
+        "smd":  "A3431-008",
+        "family":  "SECURITY",
+        "product":  "COSMO-4W"
+    },
+    {
+        "smd":  "A6830-001",
+        "family":  "SECURITY",
+        "product":  "2W-B"
+    },
+    {
+        "smd":  "A6830-001",
+        "family":  "SECURITY",
+        "product":  "2W-BBP"
+    },
+    {
+        "smd":  "A6830-001",
+        "family":  "SECURITY",
+        "product":  "2WT-B"
+    },
+    {
+        "smd":  "A6830-001",
+        "family":  "SECURITY",
+        "product":  "2WT-BBP"
+    },
+    {
+        "smd":  "A6832-001",
+        "family":  "SECURITY",
+        "product":  "4W-B"
+    },
+    {
+        "smd":  "A6832-001",
+        "family":  "SECURITY",
+        "product":  "4WT-B"
+    },
+    {
+        "smd":  "A6832-001",
+        "family":  "SECURITY",
+        "product":  "C4WT-BA"
+    },
+    {
+        "smd":  "A6870-001",
+        "family":  "SECURITY",
+        "product":  "2WTA-B"
+    },
+    {
+        "smd":  "A6872-001",
+        "family":  "SECURITY",
+        "product":  "2WTR-B"
+    },
+    {
+        "smd":  "A6875-001",
+        "family":  "SECURITY",
+        "product":  "4WITAR-B"
+    },
+    {
+        "smd":  "A6871-001",
+        "family":  "SECURITY",
+        "product":  "4WTA-B"
+    },
+    {
+        "smd":  "A6875-001",
+        "family":  "SECURITY",
+        "product":  "4WTAR-B"
+    },
+    {
+        "smd":  "A6873-001",
+        "family":  "SECURITY",
+        "product":  "4WTR-B"
+    },
+    {
+        "smd":  "A0305-000",
+        "family":  "SECURITY",
+        "product":  "W3-268"
+    },
+    {
+        "smd":  "A0305-000",
+        "family":  "SECURITY",
+        "product":  "W3-268NSBP"
+    },
+    {
+        "smd":  "A0305-000",
+        "family":  "SECURITY",
+        "product":  "W3-268S"
+    },
+    {
+        "smd":  "A0305-000",
+        "family":  "SECURITY",
+        "product":  "W3-268SBP"
+    }
+]

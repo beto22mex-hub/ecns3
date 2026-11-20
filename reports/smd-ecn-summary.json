@@ -1,0 +1,12 @@
+{
+  "affectedEcns": 30,
+  "affectedChanges": 4228,
+  "ecnSkuFamilyAssociations": 698,
+  "relatedSkus": 163,
+  "relatedFamilies": [
+    "AMCO",
+    "AV",
+    "SECURITY"
+  ],
+  "verifiedMatches": 24150
+}

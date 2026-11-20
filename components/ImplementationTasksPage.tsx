@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import * as XLSX from 'xlsx';
 import { ImplementationTask, User, ECN } from '../types';
 import * as api from '../services/api';
+import { DEPARTMENTS } from '../services/departments';
 import { Card, Button, Toast, Pagination } from './ui';
 
 interface ImplementationTasksPageProps {
@@ -186,25 +187,25 @@ const EcnAutocomplete: React.FC<EcnAutocompleteProps> = ({
 };
 
 const COMMON_DEPARTMENTS = [
-    'Planeación (Compras)',
-    'Planeación (Producción)',
-    'Finanzas',
-    'Materiales',
-    'Ingeniería de Manufactura',
-    'Ingeniería de Calidad',
+    ...DEPARTMENTS,
     'Ingeniería de Producto',
-    'Operaciones / Producción',
-    'Sistemas / TI'
+    'Coordinación de Cambios de Ingeniería'
 ];
 
-export const SUGGESTED_TASKS = [
-    { department: 'Planeación (Compras)', taskName: 'Asignar Fecha de Llegada de Nuevo Material', icon: '🛒' },
-    { department: 'Planeación (Producción)', taskName: 'Refrescar Órdenes de Producción', icon: '🏭' },
+export const SUGGESTED_TASKS: { department: string; taskName: string; icon: string; assignToChangeCoordinator?: boolean }[] = [
+    { department: 'Planeación (Compras)', taskName: 'Indicar fecha probable de implementación acorde a inventarios (nuevo/viejo material)', icon: '🛒' },
+    { department: 'Planeación (Producción)', taskName: 'Refrescar órdenes existentes para SKUs', icon: '🏭' },
     { department: 'Finanzas', taskName: 'Costeo de Materiales', icon: '💰' },
-    { department: 'Materiales', taskName: 'Agregar Material a Listado de Scrap', icon: '📦' },
+    { department: 'Materiales', taskName: 'Actualizar lista de scrap con nuevos números de parte', icon: '📦' },
     { department: 'Ingeniería de Manufactura', taskName: 'Creación / Actualización de Instrucciones de Trabajo', icon: '📐' },
-    { department: 'Ingeniería de Calidad', taskName: 'Validación de Calidad / Primera Pieza', icon: '🔍' },
-    { department: 'Ingeniería de Producto', taskName: 'Validación de Muestras e Ingeniería', icon: '🔬' }
+    { department: 'Calidad', taskName: 'Validación de Calidad / Primera Pieza', icon: '🔍' },
+    { department: 'Ingeniería de Producto', taskName: 'Validación de Muestras e Ingeniería', icon: '🔬' },
+    { department: 'Producción', taskName: 'Revisión de stock de material en área de reparación', icon: '🏭' },
+    { department: 'Coordinación de Cambios de Ingeniería', taskName: 'Solicitar obsoletizar número de parte de ensambles y/o componentes', icon: '📋', assignToChangeCoordinator: true },
+    { department: 'Ingeniería de Manufactura', taskName: 'Realizar Production Version y Routing de nuevo ensamble', icon: '📐' },
+    { department: 'Ingeniería de Manufactura', taskName: 'Actualizar listas de carga, ayuda visual y programas de SMD', icon: '📐' },
+    { department: 'Aduanas', taskName: 'Clasificación de nuevas revisiones de subensambles', icon: '📋' },
+    { department: 'Producción', taskName: 'Revisión de stock de subensambles previo al cambio', icon: '🏭' }
 ];
 
 interface NewTaskState {
@@ -306,7 +307,7 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
     const uniqueDepartments = useMemo(() => {
         const set = new Set<string>(COMMON_DEPARTMENTS);
         tasks.forEach(t => { if (t.department) set.add(t.department); });
-        return Array.from(set).sort();
+        return Array.from(set).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
     }, [tasks]);
 
     const filteredTasks = useMemo(() => {
@@ -414,9 +415,10 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
 
         setIsSaving(true);
         try {
+            const warnings: string[] = [];
             for (const idx of selectedSuggestedTaskIndices) {
                 const item = SUGGESTED_TASKS[idx];
-                await api.createImplementationTask({
+                const result = await api.createImplementationTask({
                     ecnId: batchEcnId.trim(),
                     family: batchFamily.trim() || 'General',
                     department: item.department,
@@ -426,11 +428,12 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
                     dueDate: batchDueDate || undefined,
                     comments: 'Tarea sugerida agregada manualmente'
                 });
+                warnings.push(...(result.notification?.warnings || []));
             }
 
             setNotification({
-                message: `Se crearon exitosamente ${selectedSuggestedTaskIndices.length} tareas sugeridas para el ECN ${batchEcnId.trim()}.`,
-                type: 'success'
+                message: `Se crearon ${selectedSuggestedTaskIndices.length} tareas para el ECN ${batchEcnId.trim()}. ${[...new Set(warnings)].join(' ')}`,
+                type: warnings.length ? 'error' : 'success'
             });
             setIsBatchSuggestionsModalOpen(false);
             setBatchEcnId('');
@@ -467,7 +470,7 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
 
         setIsSaving(true);
         try {
-            await api.createImplementationTask({
+            const result = await api.createImplementationTask({
                 ecnId: finalEcnId,
                 family: newTask.family.trim() || 'General',
                 department: finalDept,
@@ -478,7 +481,8 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
                 comments: newTask.comments.trim()
             });
 
-            setNotification({ message: 'Nueva tarea creada exitosamente.', type: 'success' });
+            const warnings = result.notification?.warnings || [];
+            setNotification({ message: `Tarea creada. Correos enviados: ${result.notification?.sent || 0}. ${warnings.join(' ')}`, type: warnings.length ? 'error' : 'success' });
             setIsCreateModalOpen(false);
             setNewTask(initialNewTaskState);
             await fetchTasks();
@@ -551,6 +555,7 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
             'ECN': t.ecnId,
             'FAMILIA DE PRODUCTO': t.family,
             'DEPARTAMENTO': t.department,
+            'FECHA DE APERTURA': t.createdAt ? t.createdAt.split('T')[0] : 'No registrada',
             'TAREA DE IMPLEMENTACIÓN': t.taskName,
             'RESPONSABLE ASIGNADO': t.assignedUserName || users.find(u => u.id === t.assignedUserId)?.name || t.assignedUserId || 'Sin asignar',
             'ESTATUS': t.status,
@@ -730,13 +735,14 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
                             <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Responsable</th>
                             <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Estatus</th>
                             <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Vencimiento</th>
+                            <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Apertura</th>
                             <th scope="col" className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider">Acciones</th>
                         </tr>
                     </thead>
                     <tbody className="bg-card divide-y divide-border">
                         {isLoading ? (
                             <tr>
-                                <td colSpan={8} className="text-center py-12 text-muted-foreground">
+                                <td colSpan={9} className="text-center py-12 text-muted-foreground">
                                     <div className="inline-flex items-center gap-2">
                                         <svg className="animate-spin h-5 w-5 text-primary" viewBox="0 0 24 24" fill="none">
                                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -810,6 +816,9 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
                                                 <span className="text-muted-foreground/60">—</span>
                                             )}
                                         </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-sm text-muted-foreground font-mono">
+                                            {task.createdAt ? task.createdAt.split('T')[0] : 'No registrada'}
+                                        </td>
                                         <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
                                             <div className="flex items-center justify-end gap-1.5">
                                                 <button
@@ -833,7 +842,7 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
                             })
                         ) : (
                             <tr>
-                                <td colSpan={8} className="text-center py-12 text-muted-foreground">
+                                <td colSpan={9} className="text-center py-12 text-muted-foreground">
                                     <div className="flex flex-col items-center justify-center gap-2">
                                         <svg className="w-10 h-10 text-muted-foreground/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -923,6 +932,42 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
                                 </span>
                             </div>
 
+                            <div>
+                                <label htmlFor="new-task-template" className="block text-xs font-semibold text-foreground mb-1">
+                                    Tarea predefinida
+                                </label>
+                                <select
+                                    id="new-task-template"
+                                    value={SUGGESTED_TASKS.some(task => task.taskName === newTask.taskName) ? newTask.taskName : ''}
+                                    onChange={(e) => {
+                                        const template = SUGGESTED_TASKS.find(task => task.taskName === e.target.value);
+                                        setNewTask(current => ({
+                                            ...current,
+                                            taskName: template?.taskName || '',
+                                            department: template?.department || current.department,
+                                            assignedUserId: '',
+                                            customDepartment: ''
+                                        }));
+                                    }}
+                                    className="w-full px-3 py-2 border border-input rounded-md text-sm bg-input text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                                >
+                                    <option value="">Tarea personalizada</option>
+                                    {[...SUGGESTED_TASKS].sort((a, b) => a.taskName.localeCompare(b.taskName, 'es', { sensitivity: 'base' })).map(task => (
+                                        <option key={task.taskName} value={task.taskName}>
+                                            {task.taskName} — {task.department}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-[11px] text-muted-foreground mt-1">
+                                    Al seleccionar una tarea se asigna automáticamente su departamento responsable.
+                                </p>
+                                {SUGGESTED_TASKS.find(task => task.taskName === newTask.taskName)?.assignToChangeCoordinator && !newTask.assignedUserId && (
+                                    <p className="text-[11px] text-amber-600 mt-1">
+                                        Se notificará al coordinador con el rol asignado y la familia a cargo configurados en Usuarios.
+                                    </p>
+                                )}
+                            </div>
+
                             {/* Tarea Name */}
                             <div>
                                 <label className="block text-xs font-semibold text-foreground mb-1">
@@ -995,7 +1040,7 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
                                         onChange={(e) => setNewTask({ ...newTask, assignedUserId: e.target.value })}
                                         className="w-full px-3 py-2 border border-input rounded-md text-sm bg-input text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                                     >
-                                        <option value="">Sin asignar</option>
+                                        <option value="">Automático por departamento, rol y familia</option>
                                         {users.map(u => (
                                             <option key={u.id} value={u.id}>
                                                 {u.name} — {u.department || 'General'}
@@ -1023,6 +1068,7 @@ export const ImplementationTasksPage: React.FC<ImplementationTasksPageProps> = (
 
                             {/* Fecha de vencimiento */}
                             <div>
+                                <p className="text-[11px] text-muted-foreground mb-1">Se enviarán recordatorios a los responsables 5, 3 y 1 día antes del vencimiento.</p>
                                 <label className="block text-xs font-semibold text-foreground mb-1">
                                     Fecha de Vencimiento
                                 </label>

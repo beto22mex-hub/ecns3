@@ -784,8 +784,18 @@ const SkuFamilyImporter: React.FC<{ onImport: () => void, setNotification: (n: a
             if (json.length === 0) throw new Error("El archivo está vacío.");
 
             const headers = Object.keys(json[0]).map(h => h.trim().toLowerCase());
+            if (headers.includes('product') && headers.includes('sbu')) {
+                const rows = json.map(row => {
+                    const normalized = Object.fromEntries(Object.entries(row).map(([key, value]) => [key.trim().toLowerCase(), value]));
+                    return { Product: String(normalized.product ?? '').trim(), SBU: String(normalized.sbu ?? '').trim(), SMD: String(normalized.smd ?? '').trim() };
+                });
+                const result = await api.importSkuFamily(rows, file.name);
+                setNotification({ message: `Catálogo guardado: ${result.products} productos y ${result.smdLinks || 0} relaciones SMD. Registros actualizados por SKU o ensamble: ${result.updated}.`, type: 'success' });
+                onImport();
+                return;
+            }
             if (!headers.includes('assembly') || !headers.includes('sku') || !headers.includes('family')) {
-                throw new Error("El archivo debe tener las columnas 'Assembly', 'SKU' y 'Family'.");
+                throw new Error("El archivo debe tener 'Product' y 'SBU', o 'Assembly', 'SKU' y 'Family'.");
             }
 
             const dataToImport = json.map(row => ({
@@ -807,7 +817,7 @@ const SkuFamilyImporter: React.FC<{ onImport: () => void, setNotification: (n: a
     };
 
     const handleDownloadTemplate = () => {
-        const data = [{ Assembly: '123-ABC', SKU: 'SKU001', Family: 'Product Family X' }];
+        const data = [{ Product: 'BEAMHK', SBU: 'AMCO', SMD: 'A2511-001' }];
         const worksheet = XLSX.utils.json_to_sheet(data);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'SKU_Familia');
@@ -817,8 +827,9 @@ const SkuFamilyImporter: React.FC<{ onImport: () => void, setNotification: (n: a
 
     return (
         <Card>
-            <h2 className="text-xl font-semibold text-gray-800">Importar SKU y Familia por Ensamble</h2>
-            <p className="text-sm text-gray-600 my-2">Asigne SKU y Familia a los ensambles de los cambios de componentes. El archivo debe contener 'Assembly', 'SKU' y 'Family'.</p>
+            <h2 className="text-xl font-semibold text-gray-800">Importar catálogo de productos y familias</h2>
+            <p className="text-sm text-gray-600 my-2">La columna opcional SMD relaciona los ensambles con todos sus productos. Puede repetir Product en varias filas o separar varios SMD por punto y coma. Las variantes con tres dígitos finales se buscan por referencia base.</p>
+            <p className="text-sm text-gray-600 my-2">Use Product (SKU) y SBU (familia) para asignar la familia a los registros cuyo SKU o ensamble coincida. El catálogo también se aplicará a futuras importaciones. Si coinciden ambos con familias distintas, se utiliza la del SKU. También se admite el formato Assembly, SKU y Family.</p>
             <div className="flex items-center space-x-4 mt-4">
                 <label htmlFor="sku-import" className="cursor-pointer bg-gray-200 text-gray-800 hover:bg-gray-300 px-4 py-2 rounded-md text-sm font-medium">
                     {isLoading ? 'Procesando...' : 'Seleccionar Archivo'}
