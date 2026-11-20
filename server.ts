@@ -3,6 +3,12 @@ import express from 'express';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import nodemailer from 'nodemailer';
+import { CHANGE_COORDINATOR_ROLE, parseUserFamilies, taskRecipients, escapeEmailHtml } from './services/taskOwnership.ts';
+import { canonicalDepartment } from './services/departments.ts';
+import { canonicalFamily, canonicalFamilies } from './services/families.ts';
+import { calendarDate, runTaskReminders, reminderHtml } from './services/taskReminders.ts';
+import { normalizeProduct, PRODUCT_FAMILY_UPDATE_SQL } from './services/productFamilies.ts';
+import { matchSmdProducts, relatedSmdData, parseSmdAssemblies, smdBase, type SmdProductLink } from './services/smdProducts.ts';
 import https from 'https';
 import * as db from './db.ts';
 import { generateEcnSummary } from './services/geminiService.ts';
@@ -2724,24 +2730,57 @@ async function startServer() {
 
 
     // --- API ROUTES ---
+    const getSmdLinks = async (ecnId?: string): Promise<SmdProductLink[]> => {
+        if (!db.isLiveMssqlConnected()) return db.getMemoryStore().component_changes
+            .filter(change => !ecnId || change.ecn_id === ecnId).flatMap(matchSmdProducts);
+        const request = db.pool.request();
+        if (ecnId) request.input('ecnId', sql.NVarChar, ecnId);
+        return (await request.query(`SELECT * FROM dbo.component_change_smd_products ${ecnId ? 'WHERE ecnId=@ecnId' : ''}`)).recordset;
+    };
+    const groupSmdLinks = (links: SmdProductLink[]) => {
+        const groups = new Map<string, SmdProductLink[]>();
+        for (const link of links) {
+            const id = String(link.changeId).toLowerCase();
+            groups.set(id, [...(groups.get(id) || []), link]);
+        }
+        return groups;
+    };
+    const getEcnMailChanges = async (ecnId: string) => {
+        const changes = await db.pool.request().input('ecn_id', sql.NVarChar, ecnId)
+            .query('SELECT id, assembly, sku, family, old_component, new_component, old_subassembly, new_subassembly FROM component_changes WHERE ecn_id=@ecn_id');
+        const groups = groupSmdLinks(await getSmdLinks(ecnId));
+        return changes.recordset.flatMap(change => {
+            const related = relatedSmdData(change, groups.get(String(change.id).toLowerCase()) || []);
+            return related.relatedProducts.length
+                ? [...(change.sku && !related.relatedProducts.some(product => product.sku === change.sku) ? [change] : []), ...related.relatedProducts.map(product => ({ ...change, sku: product.sku, family: product.family }))]
+                : [change];
+        });
+    };
 
     app.get('/api/users', async (req, res) => {
         try {
             const result = await db.pool.request().query('SELECT * FROM users ORDER BY name');
-            res.json(result.recordset);
+            res.json(result.recordset.map(user => ({ ...user, families: parseUserFamilies(user.families) })));
         } catch (e: any) { res.status(500).json({ error: e.message }); }
     });
 
     app.put('/api/users/:id', async (req, res) => {
         try {
             const user = req.body;
+            const department = canonicalDepartment(user.department);
+            if (!department) return res.status(400).json({ error: 'Seleccione un departamento válido del catálogo.' });
+            const families = parseUserFamilies(user.families);
+            if (!families.length) return res.status(400).json({ error: 'Asigne al menos una familia al usuario.' });
+            if (user.taskRole && user.taskRole !== CHANGE_COORDINATOR_ROLE) return res.status(400).json({ error: 'Rol de tareas inválido.' });
             await db.pool.request()
                 .input('id', sql.NVarChar, req.params.id)
                 .input('name', sql.NVarChar, user.name)
                 .input('email', sql.NVarChar, user.email)
-                .input('dept', sql.NVarChar, user.department)
+                .input('dept', sql.NVarChar, department)
                 .input('photo', sql.NVarChar, user.photo || null)
-                .query("UPDATE users SET name=@name, email=@email, department=@dept, photo=@photo WHERE id=@id");
+                .input('taskRole', sql.NVarChar, user.taskRole || null)
+                .input('families', sql.NVarChar, JSON.stringify(families))
+                .query("UPDATE users SET name=@name, email=@email, department=@dept, photo=@photo, taskRole=@taskRole, families=@families WHERE id=@id");
             res.json({ message: 'User updated' });
         } catch (e: any) { res.status(500).json({ error: e.message }); }
     });
@@ -2797,6 +2836,11 @@ async function startServer() {
                     if (newVal) map[c.ecn_id].new.add(newVal);
                     if (c.site) map[c.ecn_id].sites.add(c.site);
                 });
+                for (const link of await getSmdLinks()) {
+                    if (!map[link.ecnId!]) continue;
+                    map[link.ecnId!].skus.add(link.sku);
+                    map[link.ecnId!].families.add(link.family);
+                }
                 ecns.forEach(e => {
                     e.skuList = map[e.id] ? Array.from(map[e.id].skus).join(', ') : '';
                     e.oldComponentList = map[e.id] ? Array.from(map[e.id].old).join(', ') : '';
@@ -2825,7 +2869,9 @@ async function startServer() {
             if (!ecn) return res.status(404).json({ error: 'Not found' });
 
             const changes = await db.pool.request().input('id', sql.NVarChar, req.params.id).query("SELECT * FROM component_changes WHERE ecn_id=@id");
+            const smdGroups = groupSmdLinks(await getSmdLinks(String(req.params.id)));
             ecn.changes = changes.recordset.map(c => ({
+                ...relatedSmdData(c, smdGroups.get(String(c.id).toLowerCase()) || []),
                 id: c.id,
                 assembly: c.assembly,
                 assemblyRevision: c.assembly_revision,
@@ -2860,7 +2906,9 @@ async function startServer() {
             if (!ecn) return res.status(404).json({ error: 'ECN not found' });
 
             const changes = await db.pool.request().input('id', sql.NVarChar, ecnId).query("SELECT * FROM component_changes WHERE ecn_id=@id");
+            const smdGroups = groupSmdLinks(await getSmdLinks(String(ecnId)));
             ecn.changes = changes.recordset.map(c => ({
+                ...relatedSmdData(c, smdGroups.get(String(c.id).toLowerCase()) || []),
                 id: c.id,
                 assembly: c.assembly,
                 assemblyRevision: c.assembly_revision,
@@ -2958,7 +3006,7 @@ async function startServer() {
                             .input('old_comp', sql.NVarChar, change.oldComponent || '')
                             .input('new_comp', sql.NVarChar, change.newComponent || '')
                             .input('sku', sql.NVarChar, change.sku || '')
-                            .input('family', sql.NVarChar, change.family || '')
+                            .input('family', sql.NVarChar, canonicalFamily(change.family))
                             .input('demand', sql.Decimal(18, 2), change.demand || 0)
                             .input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0)
                             .input('open_po', sql.Decimal(18, 2), change.openPoQty || 0)
@@ -2985,7 +3033,7 @@ async function startServer() {
                             .input('old_comp', sql.NVarChar, change.oldComponent || '')
                             .input('new_comp', sql.NVarChar, change.newComponent || '')
                             .input('sku', sql.NVarChar, change.sku || '')
-                            .input('family', sql.NVarChar, change.family || '')
+                            .input('family', sql.NVarChar, canonicalFamily(change.family))
                             .input('demand', sql.Decimal(18, 2), change.demand || 0)
                             .input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0)
                             .input('open_po', sql.Decimal(18, 2), change.openPoQty || 0)
@@ -3037,7 +3085,7 @@ async function startServer() {
                             .input('old_comp', sql.NVarChar, change.oldComponent || '')
                             .input('new_comp', sql.NVarChar, change.newComponent || '')
                             .input('sku', sql.NVarChar, change.sku || '')
-                            .input('family', sql.NVarChar, change.family || '')
+                            .input('family', sql.NVarChar, canonicalFamily(change.family))
                             .input('demand', sql.Decimal(18, 2), change.demand || 0)
                             .input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0)
                             .input('open_po', sql.Decimal(18, 2), change.openPoQty || 0)
@@ -3076,7 +3124,7 @@ async function startServer() {
                                     .input('old_comp', sql.NVarChar, change.oldComponent || '')
                                     .input('new_comp', sql.NVarChar, change.newComponent || '')
                                     .input('sku', sql.NVarChar, change.sku || '')
-                                    .input('family', sql.NVarChar, change.family || '')
+                                    .input('family', sql.NVarChar, canonicalFamily(change.family))
                                     .input('demand', sql.Decimal(18, 2), change.demand || 0)
                                     .input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0)
                                     .input('open_po', sql.Decimal(18, 2), change.openPoQty || 0)
@@ -3967,7 +4015,7 @@ On Error Resume Next
 
 Dim SapGuiAuto, appObj, connObj, sessionObj, httpObj
 Dim assemblyList(), currentAssembly
-Dim maxLvl, bestSku, totalUpdated, totalErrors, updatePayload
+Dim maxLvl, bestSku, totalUpdated, totalErrors, updatePayload, screenStage
 
 
 totalUpdated = 0
@@ -3991,13 +4039,19 @@ If appObj.Children.Count = 0 Then
     WScript.Quit 1
 End If
 
-Set connObj = appObj.Children(0)
-Set sessionObj = connObj.Children(0)
-
+Set sessionObj = Nothing
+Err.Clear
+Set sessionObj = appObj.ActiveSession
+If sessionObj Is Nothing Then
+    Err.Clear
+    Set connObj = appObj.Children(0)
+    Set sessionObj = connObj.Children(0)
+End If
 If sessionObj Is Nothing Then
     WScript.Echo "RESULT_ERR:No hay sesion activa en SAP GUI."
     WScript.Quit 1
 End If
+On Error GoTo 0
 
 WScript.Echo "Conectado a SAP GUI. Iniciando transaccion CS15..."
 
@@ -4006,10 +4060,12 @@ ${assemblyListCode}
 For Each currentAssembly In assemblyList
     bestSku = ""
     Err.Clear
+    On Error Resume Next
     ExtractSku currentAssembly, bestSku, maxLvl
     If Err.Number <> 0 Then
         totalErrors = totalErrors + 1
-        WScript.Echo "CS15_ERROR:" & currentAssembly & " " & Err.Description
+        WScript.Echo "CS15_ERROR:" & currentAssembly & " [" & screenStage & "] " & Err.Description
+        If screenStage <> "ALV" Then Exit For
     ElseIf bestSku <> "" Then
         WScript.Echo "CS15_OK:" & currentAssembly & ":::" & bestSku & ":::Nivel:" & CStr(maxLvl)
         If totalUpdated > 0 Then updatePayload = updatePayload & ","
@@ -4042,26 +4098,48 @@ End Function
 
 Sub ExtractSku(material, ByRef sku, ByRef maxLevel)
     Dim grid, rowCount, r, currMat, currLvl, levelText, column, levelColumn, materialColumn
-        ' 1. Entrar a CS15
-        sessionObj.findById("wnd[0]/tbar[0]/okcd").Text = "/nCS15"
-        sessionObj.findById("wnd[0]").SendVKey 0
-        
-        ' 2. Pantalla inicial (Imagen 1)
-        sessionObj.findById("wnd[0]/usr/ctxtRC29N-IDNRK").Text = material
-        sessionObj.findById("wnd[0]/usr/chkRC29N-DIREKT").Selected = True
-        sessionObj.findById("wnd[0]/usr/chkRC29N-MATUV").Selected = True
-        sessionObj.findById("wnd[0]/usr/ctxtRC29N-DATBI").Text = "31.12.2099"
-        sessionObj.findById("wnd[0]/tbar[0]/btn[8]").press
-        
-        ' 3. Pantalla de vista (Imagen 2)
-        sessionObj.findById("wnd[0]/usr/ctxtRC29N-DATUV").Text = "01.01.2026"
-        sessionObj.findById("wnd[0]/usr/ctxtRC29N-WERKS").Text = "5205"
-        sessionObj.findById("wnd[0]/usr/chkRC29N-STULF").Selected = True
-        sessionObj.findById("wnd[0]/usr/chkRC29N-STFLG").Selected = True
-        sessionObj.findById("wnd[0]/tbar[0]/btn[8]").press
-        
-    Set grid = FindGrid(sessionObj.findById("wnd[0]/usr"))
-    If grid Is Nothing Then Err.Raise 1001, "CS15", "Sin grilla ALV. " & sessionObj.findById("wnd[0]/sbar").Text
+    Dim initialMaterial, control, statusBar, topMaterials
+    screenStage = "Pantalla inicial / localizar Material"
+    Set initialMaterial = FindCs15Field(sessionObj.findById("wnd[0]"), "RC29L-MATNR")
+    If initialMaterial Is Nothing Then
+        screenStage = "Pantalla inicial / abrir CS15"
+        sessionObj.StartTransaction "CS15"
+        screenStage = "Pantalla inicial / localizar Material tras abrir CS15"
+        Set initialMaterial = RequireCs15Field("RC29L-MATNR", "Material")
+    End If
+    screenStage = "Pantalla inicial / escribir Material"
+    initialMaterial.Text = material
+    screenStage = "Pantalla inicial / marcar Direct"
+    SetCs15Option "RC29L-DIRKT", Array("direct", "directa", "directo")
+    screenStage = "Pantalla inicial / marcar Material BOM"
+    SetCs15Option "RC29L-MATTP", Array("material bom", "lmat p.mat.", "lmat p.mat")
+    screenStage = "Pantalla inicial / escribir Valid From"
+    Set control = RequireCs15Field("RC29L-DATUV", "Valid From")
+    control.Text = "31.12.2099"
+    screenStage = "Pantalla inicial / limpiar Valid to"
+    Set control = RequireCs15Field("RC29L-DATUB", "Valid to")
+    control.Text = ""
+    screenStage = "Pantalla inicial / Pantalla siguiente"
+    PressCs15Next
+
+    screenStage = "Fijar vista / escribir Plant"
+    Set control = RequireCs15Field("RC29L-WERKS", "Plant")
+    control.Text = "5205"
+    screenStage = "Fijar vista / desmarcar Lista variable"
+    Set control = RequireCs15Field("RC29L-VALST", "Variable list")
+    control.Selected = False
+    screenStage = "Fijar vista / marcar Multi-lev."
+    SetCs15Option "RC29L-MEHRS", Array("multi-lev.", "multi-level", "multilevel", "a var.niv.")
+    screenStage = "Fijar vista / ejecutar"
+    PressCs15Execute
+
+    screenStage = "ALV"
+    Set statusBar = sessionObj.findById("wnd[0]/sbar", False)
+    If Not statusBar Is Nothing Then
+        If InStr(1, statusBar.Text, "is not used", vbTextCompare) > 0 Then Exit Sub
+    End If
+    Set grid = FindGrid(sessionObj.findById("wnd[0]"))
+    If grid Is Nothing Then Err.Raise 1001, "CS15", "Sin grilla ALV. " & Cs15ScreenDetails()
 
     rowCount = grid.RowCount
     If rowCount = 0 Then Exit Sub
@@ -4075,6 +4153,8 @@ Sub ExtractSku(material, ByRef sku, ByRef maxLevel)
         Err.Raise 1002, "CS15", "Se requieren las columnas STUFE y MATNR en el ALV."
     End If
 
+    Set topMaterials = CreateObject("Scripting.Dictionary")
+    topMaterials.CompareMode = vbTextCompare
     maxLevel = -1
     For r = 0 To rowCount - 1
         If r < grid.FirstVisibleRow Or r >= grid.FirstVisibleRow + grid.VisibleRowCount Then grid.FirstVisibleRow = r
@@ -4084,11 +4164,158 @@ Sub ExtractSku(material, ByRef sku, ByRef maxLevel)
             currLvl = CLng(levelText)
             If currLvl > maxLevel Then
                 maxLevel = currLvl
-                sku = currMat
+                topMaterials.RemoveAll
             End If
+            If currLvl = maxLevel Then topMaterials(currMat) = True
         End If
     Next
+    If topMaterials.Count > 0 Then sku = Join(topMaterials.Keys, ", ")
 End Sub
+
+Function Cs15ScreenDetails()
+    Dim statusBar, popup
+    Cs15ScreenDetails = "Pantalla SAP: " & sessionObj.findById("wnd[0]").Text & " (" & sessionObj.Info.ScreenNumber & ")."
+    Set statusBar = sessionObj.findById("wnd[0]/sbar", False)
+    If Not statusBar Is Nothing Then Cs15ScreenDetails = Cs15ScreenDetails & " " & statusBar.Text
+    Set popup = sessionObj.findById("wnd[1]", False)
+    If Not popup Is Nothing Then Cs15ScreenDetails = Cs15ScreenDetails & " Ventana adicional: " & popup.Text
+End Function
+
+Function RequireCs15Field(technicalName, caption)
+    Set RequireCs15Field = FindCs15Field(sessionObj.findById("wnd[0]"), technicalName)
+    If RequireCs15Field Is Nothing Then
+        Err.Raise 1003, "CS15", "No se encontro " & caption & " (" & technicalName & "). " & Cs15ScreenDetails() & " Campos: " & Cs15InputIds(sessionObj.findById("wnd[0]"))
+    End If
+End Function
+
+Function FindCs15Field(window, technicalName)
+    Dim prefix, fieldType, control
+    Set FindCs15Field = Nothing
+    ' Standard dynpro fields may expose their technical key only in the ID.
+    For Each prefix In Array("ctxt", "txt", "chk", "rad")
+        Set control = sessionObj.findById("wnd[0]/usr/" & prefix & technicalName, False)
+        If Not control Is Nothing Then
+            Set FindCs15Field = control
+            Exit Function
+        End If
+    Next
+
+    On Error Resume Next
+    For Each fieldType In Array("GuiCTextField", "GuiTextField", "GuiCheckBox", "GuiRadioButton")
+        Set control = Nothing
+        Err.Clear
+        Set control = window.FindByName(technicalName, fieldType)
+        If Err.Number = 0 And Not control Is Nothing Then
+            Set FindCs15Field = control
+            Exit Function
+        End If
+    Next
+    Err.Clear
+    On Error GoTo 0
+    Set FindCs15Field = FindCs15FieldById(window, technicalName, False)
+    If FindCs15Field Is Nothing Then
+        Set FindCs15Field = FindCs15FieldById(window, Mid(technicalName, InStr(technicalName, "-")), True)
+    End If
+End Function
+
+Function FindCs15FieldById(container, technicalName, matchSuffix)
+    Dim child, found, controlId, prefix
+    Set FindCs15FieldById = Nothing
+    If Not container.ContainerType Then Exit Function
+    For Each child In container.Children
+        controlId = Mid(child.Id, InStrRev(child.Id, "/") + 1)
+        For Each prefix In Array("ctxt", "txt", "chk", "rad")
+            If StrComp(controlId, prefix & technicalName, vbTextCompare) = 0 Or _
+                (matchSuffix And LCase(Left(controlId, Len(prefix))) = prefix And _
+                UCase(Right(controlId, Len(technicalName))) = technicalName) Then
+                Set FindCs15FieldById = child
+                Exit Function
+            End If
+        Next
+        Set found = FindCs15FieldById(child, technicalName, matchSuffix)
+        If Not found Is Nothing Then
+            Set FindCs15FieldById = found
+            Exit Function
+        End If
+    Next
+End Function
+
+Function Cs15InputIds(container)
+    Dim child
+    Cs15InputIds = ""
+    If Not container.ContainerType Then Exit Function
+    For Each child In container.Children
+        Select Case child.Type
+            Case "GuiTextField", "GuiCTextField", "GuiCheckBox", "GuiRadioButton"
+                Cs15InputIds = Cs15InputIds & Mid(child.Id, InStrRev(child.Id, "/") + 1) & " "
+            Case Else
+                Cs15InputIds = Cs15InputIds & Cs15InputIds(child)
+        End Select
+    Next
+End Function
+
+Sub PressCs15Next()
+    PressCs15ToolbarButton "next screen", "pantalla siguiente"
+End Sub
+
+Sub PressCs15ToolbarButton(englishCaption, spanishCaption)
+    Dim toolbarId, toolbar, button, caption, available
+    available = ""
+    For Each toolbarId In Array("wnd[0]/tbar[0]", "wnd[0]/tbar[1]")
+        Set toolbar = sessionObj.findById(toolbarId, False)
+        If Not toolbar Is Nothing Then
+            For Each button In toolbar.Children
+                If button.Type = "GuiButton" Then
+                    caption = LCase(Trim(button.Text & " " & button.Tooltip))
+                    available = available & " [" & button.Id & " " & caption & "]"
+                    If InStr(caption, englishCaption) > 0 Or InStr(caption, spanishCaption) > 0 Then
+                        button.Press
+                        Exit Sub
+                    End If
+                End If
+            Next
+        End If
+    Next
+    Err.Raise 1005, "CS15", "No se encontro el boton " & englishCaption & ". " & Cs15ScreenDetails() & " Botones:" & available
+End Sub
+
+Sub PressCs15Execute()
+    PressCs15ToolbarButton "execute", "ejecutar"
+End Sub
+
+Sub SetCs15Option(technicalName, captions)
+    Dim control, window
+    Set window = sessionObj.findById("wnd[0]")
+    Set control = FindCs15Field(window, technicalName)
+    If control Is Nothing Then Set control = FindCs15Option(window, captions)
+    If control Is Nothing Then Err.Raise 1004, "CS15", "No se encontro la opcion " & captions(0) & " (" & technicalName & "). " & Cs15ScreenDetails() & " Campos: " & Cs15InputIds(window)
+    If control.Type = "GuiRadioButton" Then
+        control.Select
+    Else
+        control.Selected = True
+    End If
+End Sub
+
+Function FindCs15Option(control, captions)
+    Dim child, caption, found
+    Set FindCs15Option = Nothing
+    If control.Type = "GuiCheckBox" Or control.Type = "GuiRadioButton" Then
+        For Each caption In captions
+            If LCase(Trim(control.Text)) = caption Then
+                Set FindCs15Option = control
+                Exit Function
+            End If
+        Next
+    End If
+    If Not control.ContainerType Then Exit Function
+    For Each child In control.Children
+        Set found = FindCs15Option(child, captions)
+        If Not found Is Nothing Then
+            Set FindCs15Option = found
+            Exit Function
+        End If
+    Next
+End Function
 
 Function FindGrid(control)
     Dim child, found
@@ -4164,7 +4391,7 @@ End Function
             }
 
             const errors = lines.filter(line => line.startsWith('CS15_ERROR:'));
-            if (errors.length === assemblies.length) throw new Error(errors[0]);
+            if (errors.length && !updates.length) throw new Error(errors[0].slice(11));
             return {
                 success: true,
                 message: `CS15: ${updates.length} de ${assemblies.length} ensambles guardados. Errores de SAP: ${errors.length}.${errors.length ? ` ${errors[0].slice(11)}` : ''}`,
@@ -4525,7 +4752,7 @@ exit /b %EXIT_CODE%
                     cReq.input('new_sub_rev', sql.NVarChar, dbText(rec.newSubassemblyRevision, 50));
                     cReq.input('new_sub_desc', sql.NVarChar, dbText(rec.newSubassemblyDescription, 1000));
                     cReq.input('sku', sql.NVarChar, dbText(rec.topSku || rec.sku, 100));
-                    cReq.input('family', sql.NVarChar, dbText(rec.family, 100, 'VESDA'));
+                    cReq.input('family', sql.NVarChar, canonicalFamily(dbText(rec.family, 100, 'VESDA')));
                     cReq.input('demand', sql.Decimal(18, 2), rec.demand || rec.qty || 0);
                     cReq.input('on_hand', sql.Decimal(18, 2), rec.onHandInventory || 0);
                     cReq.input('open_po', sql.Decimal(18, 2), rec.openPoQty || 0);
@@ -4546,7 +4773,7 @@ exit /b %EXIT_CODE%
                         uReq.input('new_comp_rev', sql.NVarChar, rec.newComponentRevision || '');
                         uReq.input('new_comp_desc', sql.NVarChar, rec.newComponentDescription || '');
                         uReq.input('sku', sql.NVarChar, rec.topSku || rec.sku || '');
-                        uReq.input('family', sql.NVarChar, rec.family || 'VESDA');
+                        uReq.input('family', sql.NVarChar, canonicalFamily(rec.family || 'VESDA'));
                         uReq.input('demand', sql.Decimal(18, 2), rec.demand || rec.qty || 0);
                         uReq.input('on_hand', sql.Decimal(18, 2), rec.onHandInventory || 0);
                         uReq.input('open_po', sql.Decimal(18, 2), rec.openPoQty || 0);
@@ -5294,7 +5521,7 @@ exit /b %EXIT_CODE%
                         cReq.input('new_sub_rev', sql.NVarChar, change.newSubassemblyRevision || '');
                         cReq.input('new_sub_desc', sql.NVarChar, change.newSubassemblyDescription || '');
                         cReq.input('sku', sql.NVarChar, change.sku || '');
-                        cReq.input('family', sql.NVarChar, change.family || '');
+                        cReq.input('family', sql.NVarChar, canonicalFamily(change.family));
                         cReq.input('demand', sql.Decimal(18, 2), change.demand || 0);
                         cReq.input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0);
                         cReq.input('open_po', sql.Decimal(18, 2), change.openPoQty || 0);
@@ -5315,7 +5542,7 @@ exit /b %EXIT_CODE%
                             uReq.input('new_comp_rev', sql.NVarChar, change.newComponentRevision || '');
                             uReq.input('new_comp_desc', sql.NVarChar, change.newComponentDescription || '');
                             uReq.input('sku', sql.NVarChar, change.sku || '');
-                            uReq.input('family', sql.NVarChar, change.family || '');
+                            uReq.input('family', sql.NVarChar, canonicalFamily(change.family));
                             uReq.input('demand', sql.Decimal(18, 2), change.demand || 0);
                             uReq.input('on_hand', sql.Decimal(18, 2), change.onHandInventory || 0);
                             uReq.input('open_po', sql.Decimal(18, 2), change.openPoQty || 0);
@@ -5412,6 +5639,15 @@ exit /b %EXIT_CODE%
 
     app.post('/api/import/users', async (req, res) => {
         const { users, fileName } = req.body;
+        if (Array.isArray(users) && users.some(user => !canonicalDepartment(user.department))) {
+            return res.status(400).json({ error: 'Todos los usuarios deben tener un departamento válido del catálogo.' });
+        }
+        if (!Array.isArray(users) || users.some(user => !parseUserFamilies(user.families).length)) {
+            return res.status(400).json({ error: 'Cada usuario importado debe tener al menos una familia a cargo.' });
+        }
+        if (users.some(user => user.taskRole && user.taskRole !== CHANGE_COORDINATOR_ROLE)) {
+            return res.status(400).json({ error: 'Rol de tareas inválido en el archivo de usuarios.' });
+        }
         const transaction = new sql.Transaction(db.pool);
         try {
             await transaction.begin();
@@ -5420,13 +5656,15 @@ exit /b %EXIT_CODE%
                     .input('id', sql.NVarChar, user.id)
                     .input('name', sql.NVarChar, user.name)
                     .input('email', sql.NVarChar, user.email)
-                    .input('dept', sql.NVarChar, user.department)
+                    .input('dept', sql.NVarChar, canonicalDepartment(user.department))
                     .input('photo', sql.NVarChar, user.photo || null)
+                    .input('families', sql.NVarChar, JSON.stringify(parseUserFamilies(user.families)))
+                    .input('taskRole', sql.NVarChar, user.taskRole || null)
                     .query(`
                         IF EXISTS (SELECT 1 FROM users WHERE id = @id)
-                            UPDATE users SET name = @name, email = @email, department = @dept, photo = @photo WHERE id = @id
+                            UPDATE users SET name = @name, email = @email, department = @dept, photo = @photo, families = @families, taskRole = COALESCE(@taskRole, taskRole) WHERE id = @id
                         ELSE
-                            INSERT INTO users (id, name, email, department, photo) VALUES (@id, @name, @email, @dept, @photo)
+                            INSERT INTO users (id, name, email, department, photo, families, taskRole) VALUES (@id, @name, @email, @dept, @photo, @families, @taskRole)
                     `);
             }
             await transaction.request()
@@ -5476,6 +5714,49 @@ exit /b %EXIT_CODE%
 
     app.post('/api/import/sku-family', async (req, res) => {
         const { data } = req.body;
+        if (!Array.isArray(data) || !data.length) return res.status(400).json({ error: 'El archivo no contiene registros.' });
+        const productMode = data.some(item => item.Product !== undefined || item.SBU !== undefined);
+        if (productMode) {
+            const products = new Map<string, string>();
+            for (const row of data) {
+                const product = normalizeProduct(row.Product);
+                const family = canonicalFamily(row.SBU);
+                if (!product || !family || product.length > 100 || family.length > 100) return res.status(400).json({ error: 'Cada fila debe incluir Product y SBU válidos (máximo 100 caracteres).' });
+                if (products.has(product) && products.get(product) !== family) return res.status(400).json({ error: `El producto ${product} tiene más de una familia en el archivo.` });
+                products.set(product, family);
+            }
+            if (!db.isLiveMssqlConnected()) return res.status(503).json({ error: 'Se requiere conexión SQL para guardar el catálogo Product/SBU.' });
+            const catalogTransaction = new sql.Transaction(db.pool);
+            try {
+                await catalogTransaction.begin();
+                if ((catalogTransaction as any).isMemory) throw new Error('No se pudo iniciar la transacción SQL del catálogo.');
+                for (const [product, family] of products) await catalogTransaction.request()
+                    .input('product', sql.NVarChar, product).input('family', sql.NVarChar, family).query(`
+                        MERGE dbo.product_family_catalog WITH (HOLDLOCK) AS target
+                        USING (SELECT @product AS product, @family AS family) AS source ON target.product=source.product
+                        WHEN MATCHED THEN UPDATE SET family=source.family
+                        WHEN NOT MATCHED THEN INSERT (product, family) VALUES (source.product, source.family);
+                    `);
+                let smdLinks = 0;
+                for (const row of data) for (const smd of parseSmdAssemblies(row.SMD)) {
+                    if (smd.length > 100) throw new Error('El número de ensamble SMD supera 100 caracteres.');
+                    await catalogTransaction.request().input('product', sql.NVarChar, normalizeProduct(row.Product))
+                        .input('smd', sql.NVarChar, smd).input('base', sql.NVarChar, smdBase(smd)).query(`
+                            MERGE dbo.smd_product_catalog WITH (HOLDLOCK) AS target
+                            USING (SELECT @product AS product, @smd AS smd, @base AS smd_base) source
+                            ON target.product=source.product AND target.smd=source.smd
+                            WHEN NOT MATCHED THEN INSERT(smd,smd_base,product) VALUES(source.smd,source.smd_base,source.product);
+                        `);
+                    smdLinks++;
+                }
+                const updated = await catalogTransaction.request().query(PRODUCT_FAMILY_UPDATE_SQL);
+                await catalogTransaction.commit();
+                return res.json({ success: true, products: products.size, smdLinks, updated: updated.rowsAffected[0] || 0 });
+            } catch (error: any) {
+                try { await catalogTransaction.rollback(); } catch {}
+                return res.status(500).json({ error: error.message });
+            }
+        }
         const transaction = new sql.Transaction(db.pool);
         try {
             await transaction.begin();
@@ -5484,7 +5765,7 @@ exit /b %EXIT_CODE%
                 await transaction.request()
                     .input('assembly', sql.NVarChar, item.Assembly.trim())
                     .input('sku', sql.NVarChar, (item.SKU || '').trim())
-                    .input('family', sql.NVarChar, (item.Family || '').trim())
+                    .input('family', sql.NVarChar, canonicalFamily(item.Family))
                     .query("UPDATE component_changes SET sku = @sku, family = @family WHERE assembly = @assembly");
             }
             await transaction.request()
@@ -5773,7 +6054,7 @@ exit /b %EXIT_CODE%
             await db.pool.request()
                 .input('assembly', sql.NVarChar, assembly)
                 .input('sku', sql.NVarChar, sku || '')
-                .input('family', sql.NVarChar, family || '')
+                .input('family', sql.NVarChar, canonicalFamily(family))
                 .query("UPDATE component_changes SET sku = @sku, family = @family WHERE assembly = @assembly");
             res.json({ success: true, message: 'SKU y Familia actualizados correctamente para el ensamble.' });
         } catch (e: any) {
@@ -5880,6 +6161,9 @@ exit /b %EXIT_CODE%
             host: host,
             port: port,
             secure: settings.secure === 'true',
+            connectionTimeout: 10000,
+            greetingTimeout: 10000,
+            socketTimeout: 15000,
             tls: {
                 rejectUnauthorized: false
             },
@@ -5900,6 +6184,64 @@ exit /b %EXIT_CODE%
             from,
             fromName
         };
+    };
+
+    let remindersRunning = false;
+    const checkTaskReminders = async () => {
+        if (remindersRunning || !db.isLiveMssqlConnected()) return;
+        remindersRunning = true;
+        try {
+            const today = calendarDate(new Date(), process.env.TASK_TIME_ZONE || 'America/Denver');
+            let mail: Awaited<ReturnType<typeof getEmailTransporter>> | undefined;
+            await runTaskReminders({
+                today,
+                getTasks: async () => (await db.pool.request().input('today', sql.Date, today).query(`
+                    SELECT id, ecn_id AS ecnId, family, department, task_name AS taskName, status,
+                        assigned_user_id AS assignedUserId, due_date AS dueDate
+                    FROM dbo.implementation_tasks
+                    WHERE status IN ('Pendiente', 'En Proceso') AND DATEDIFF(day, @today, due_date) IN (5, 3, 1)
+                `)).recordset,
+                getUsers: async () => (await db.pool.request().query('SELECT * FROM users')).recordset,
+                getContext: async task => {
+                    const ecn = await db.pool.request().input('id', sql.NVarChar, task.ecnId).query('SELECT description FROM ecns WHERE id=@id');
+                    return { description: ecn.recordset[0]?.description || '', changes: await getEcnMailChanges(task.ecnId) };
+                },
+                claim: async delivery => {
+                    const token = uuidv4();
+                    const result = await db.pool.request()
+                        .input('id', sql.UniqueIdentifier, delivery.task.id).input('due', sql.Date, delivery.dueDate)
+                        .input('days', sql.Int, delivery.days).input('userId', sql.NVarChar, delivery.user.id)
+                        .input('token', sql.UniqueIdentifier, token).query(`
+                            MERGE dbo.task_reminder_deliveries WITH (HOLDLOCK) AS target
+                            USING (SELECT @id AS task_id, @due AS due_date, @days AS days_before, @userId AS user_id) AS source
+                            ON target.task_id=source.task_id AND target.due_date=source.due_date
+                                AND target.days_before=source.days_before AND target.user_id=source.user_id
+                            WHEN MATCHED AND target.sent_at IS NULL AND target.attempted_at < DATEADD(minute, -30, SYSUTCDATETIME())
+                                THEN UPDATE SET claim_token=@token, attempted_at=SYSUTCDATETIME()
+                            WHEN NOT MATCHED THEN INSERT (task_id, due_date, days_before, user_id, claim_token, attempted_at)
+                                VALUES (@id, @due, @days, @userId, @token, SYSUTCDATETIME())
+                            OUTPUT inserted.claim_token;
+                        `);
+                    return result.recordset.length ? token : undefined;
+                },
+                send: async (delivery, context) => {
+                    mail ||= await getEmailTransporter();
+                    const info = await mail.transporter.sendMail({
+                        from: `"${mail.fromName}" <${mail.from}>`, to: delivery.user.email,
+                        subject: `[ECN ${delivery.task.ecnId}] Recordatorio ${delivery.days} día(s): ${delivery.task.taskName}`.replace(/[\r\n]/g, ' '),
+                        html: reminderHtml(delivery, context)
+                    });
+                    if (info.rejected?.length) throw new Error('Destinatario de recordatorio rechazado por SMTP');
+                },
+                finish: async (delivery, token, sent) => {
+                    await db.pool.request().input('token', sql.UniqueIdentifier, token).query(sent
+                        ? 'UPDATE dbo.task_reminder_deliveries SET sent_at=SYSUTCDATETIME() WHERE claim_token=@token'
+                        : 'UPDATE dbo.task_reminder_deliveries SET attempted_at=DATEADD(minute,-31,SYSUTCDATETIME()) WHERE claim_token=@token AND sent_at IS NULL');
+                },
+                onError: error => console.error('[Task Reminders] Delivery failed:', error)
+            });
+        } catch (error) { console.error('[Task Reminders] Check failed:', error); }
+        finally { remindersRunning = false; }
     };
 
     app.post('/api/settings/email/test', async (req, res) => {
@@ -6091,7 +6433,7 @@ exit /b %EXIT_CODE%
         { department: 'Finanzas', taskName: 'Costeo de Materiales' },
         { department: 'Materiales', taskName: 'Agregar Material a Listado de Scrap' },
         { department: 'Ingeniería de Manufactura', taskName: 'Creación / Actualización de Instrucciones de Trabajo' },
-        { department: 'Ingeniería de Calidad', taskName: 'Validación de Calidad / Liberación de Primera Pieza' },
+        { department: 'Calidad', taskName: 'Validación de Calidad / Liberación de Primera Pieza' },
         { department: 'Ingeniería de Producto', taskName: 'Validación de Muestras e Ingeniería' }
     ];
 
@@ -6114,7 +6456,8 @@ exit /b %EXIT_CODE%
                     t.status,
                     t.due_date as dueDate,
                     t.comments,
-                    t.updated_at as updatedAt
+                    t.updated_at as updatedAt,
+                    t.created_at as createdAt
                 FROM implementation_tasks t
                 LEFT JOIN users u ON t.assigned_user_id = u.id
                 WHERE 1=1
@@ -6122,7 +6465,7 @@ exit /b %EXIT_CODE%
             const reqDb = db.pool.request();
             if (family) {
                 query += " AND t.family = @family";
-                reqDb.input('family', sql.NVarChar, family);
+                reqDb.input('family', sql.NVarChar, canonicalFamily(family));
             }
             if (department) {
                 query += " AND t.department = @department";
@@ -6156,29 +6499,80 @@ exit /b %EXIT_CODE%
                 return res.status(400).json({ error: 'El número de ECN es requerido' });
             }
 
+            const ecnResult = await db.pool.request().input('id', sql.NVarChar, ecnId.trim())
+                .query('SELECT id, description FROM ecns WHERE id=@id');
+            const ecn = ecnResult.recordset[0];
+            if (!ecn) return res.status(400).json({ error: 'El ECN indicado no existe.' });
+            const changes = await getEcnMailChanges(ecnId.trim());
+            const taskFamilies = canonicalFamily(family) && canonicalFamily(family) !== 'GENERAL'
+                ? [canonicalFamily(family)]
+                : canonicalFamilies(changes.map(change => change.family));
+            const usersResult = await db.pool.request().query('SELECT * FROM users ORDER BY name');
+            const recipients = taskRecipients(usersResult.recordset, department || 'General', taskFamilies, assignedUserId);
+            if (assignedUserId && !recipients.length) return res.status(400).json({ error: 'El responsable seleccionado no existe.' });
+            const resolvedUserId = assignedUserId || (recipients.length === 1 ? recipients[0].id : null);
             const taskId = uuidv4();
             await db.pool.request()
                 .input('id', sql.UniqueIdentifier, taskId)
                 .input('ecnId', sql.NVarChar, ecnId.trim())
-                .input('family', sql.NVarChar, family ? family.trim() : 'General')
+                .input('family', sql.NVarChar, canonicalFamily(family) || 'GENERAL')
                 .input('department', sql.NVarChar, department ? department.trim() : 'General')
                 .input('taskName', sql.NVarChar, taskName.trim())
-                .input('userId', sql.NVarChar, assignedUserId || null)
+                .input('userId', sql.NVarChar, resolvedUserId)
                 .input('status', sql.NVarChar, status || 'Pendiente')
                 .input('dueDate', sql.Date, dueDate ? new Date(dueDate) : null)
                 .input('comments', sql.NVarChar, comments || '')
                 .query(`
                     INSERT INTO implementation_tasks (
-                        id, ecn_id, family, department, task_name, assigned_user_id, status, due_date, comments, updated_at
+                        id, ecn_id, family, department, task_name, assigned_user_id, status, due_date, comments, updated_at, created_at
                     ) VALUES (
-                        @id, @ecnId, @family, @department, @taskName, @userId, @status, @dueDate, @comments, SYSDATETIME()
+                        @id, @ecnId, @family, @department, @taskName, @userId, @status, @dueDate, @comments, SYSDATETIME(), SYSUTCDATETIME()
                     )
                 `);
 
+            // The task remains saved if SMTP is unavailable; report delivery separately to avoid duplicate tasks on retry.
+            const notification = { sent: 0, failed: 0, warnings: [] as string[] };
+            if (!recipients.length) notification.warnings.push('No hay usuarios responsables para este departamento y familia.');
+            const h = escapeEmailHtml;
+            const rows = changes.map(change => `<tr>${[change.family, change.sku, change.assembly, change.old_component, change.new_component, change.old_subassembly, change.new_subassembly].map(value => `<td style="border:1px solid #ccc;padding:6px">${h(value || '—')}</td>`).join('')}</tr>`).join('');
+            let mailConfig: Awaited<ReturnType<typeof getEmailTransporter>> | undefined;
+            try {
+                if (recipients.some(user => user.email)) mailConfig = await getEmailTransporter();
+                for (const user of recipients) {
+                    if (!user.email) {
+                        notification.failed++;
+                        notification.warnings.push(`${user.name} no tiene correo configurado.`);
+                        continue;
+                    }
+                    try {
+                        const info = await mailConfig!.transporter.sendMail({
+                            from: `"${mailConfig!.fromName}" <${mailConfig!.from}>`,
+                            to: user.email,
+                            subject: `[ECN ${ecn.id}] Nueva tarea: ${taskName.trim()}`.replace(/[\r\n]/g, ' '),
+                            html: `<h2>Nueva tarea de implementación</h2><p>Hola ${h(user.name)}, se ha generado una tarea para usted.</p>
+                                <p><strong>ECN (cambio de ingeniería):</strong> ${h(ecn.id)} — ${h(ecn.description)}</p>
+                                <p><strong>Tarea:</strong> ${h(taskName.trim())}</p><p><strong>Departamento:</strong> ${h(department)}</p>
+                                <p><strong>Familias:</strong> ${h(taskFamilies.join(', ') || 'General')}</p>
+                                <p><strong>Fecha de vencimiento:</strong> ${h(dueDate || 'Sin fecha')}</p><p>${h(comments || '')}</p>
+                                <h3>Números de parte afectados por el ECN</h3><table style="border-collapse:collapse"><thead><tr>${['Familia', 'SKU', 'Ensamble', 'Componente viejo', 'Componente nuevo', 'Subensamble viejo', 'Subensamble nuevo'].map(label => `<th>${label}</th>`).join('')}</tr></thead><tbody>${rows || '<tr><td colspan="7">Sin números de parte registrados.</td></tr>'}</tbody></table>`
+                        });
+                        if (info.rejected?.length) throw new Error('Destinatario rechazado por SMTP');
+                        notification.sent++;
+                    } catch {
+                        notification.failed++;
+                        notification.warnings.push(`No se pudo enviar el correo a ${user.name}.`);
+                    }
+                }
+            } catch {
+                notification.failed = recipients.length;
+                notification.warnings.push('No se pudo iniciar el envío de correos. Revise la configuración SMTP.');
+            }
             res.status(201).json({
                 success: true,
                 message: 'Tarea de implementación creada correctamente',
-                id: taskId
+                id: taskId,
+                assignedUserId: resolvedUserId,
+                notification
             });
         } catch (e: any) {
             console.error('[API Create Task Error]', e);
@@ -6194,7 +6588,7 @@ exit /b %EXIT_CODE%
             await db.pool.request()
                 .input('id', sql.UniqueIdentifier, taskId)
                 .input('ecnId', sql.NVarChar, ecnId ? ecnId.trim() : null)
-                .input('family', sql.NVarChar, family ? family.trim() : null)
+                .input('family', sql.NVarChar, canonicalFamily(family) || null)
                 .input('department', sql.NVarChar, department ? department.trim() : null)
                 .input('taskName', sql.NVarChar, taskName ? taskName.trim() : null)
                 .input('status', sql.NVarChar, status || 'Pendiente')
@@ -6285,6 +6679,12 @@ exit /b %EXIT_CODE%
             }
             res.sendFile(path.join(distPath, 'index.html'));
         });
+    }
+
+    if (process.env.TASK_REMINDERS_ENABLED !== 'false') {
+        const reminderTimer = setInterval(() => { void checkTaskReminders(); }, 15 * 60 * 1000);
+        reminderTimer.unref();
+        void checkTaskReminders();
     }
 
     // Start listening AFTER all routes are registered

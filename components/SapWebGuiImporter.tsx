@@ -1091,7 +1091,7 @@ pause >nul
                                     </span>
                                 </div>
                                 <p className="text-xs text-gray-600">
-                                    Ejecuta CS15 para cada ensamble que inicia con la letra "A", hace clic en pantalla siguiente, llena los parámetros (01.01.2026, Centro 5205, Lista variable, A var.niv.), ejecuta y extrae el componente con el mayor nivel (Nv.) como SKU.
+                                    Consulta en CS15 los ensambles que inician con "A". Usa el centro 5205 y Multi-lev. para guardar como SKUs todos los materiales distintos del nivel máximo.
                                 </p>
                             </div>
                         </div>

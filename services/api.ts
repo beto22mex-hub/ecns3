@@ -1,4 +1,5 @@
 import { ECN, Assembly, ChecklistItem, User, ImportLogEntry, AuditLog, ComponentChange, AzureAuthConfig, ServerAuthTestResult, GraphUserLookupResult, MaterialItem, ImplementationTask } from '../types';
+import { normalizeFamilyData } from './families';
 
 
 declare global {
@@ -58,7 +59,7 @@ const handleResponse = async (response: Response) => {
         console.error(`Expected JSON but received ${contentType}. Body sample: ${text.substring(0, 100)}`);
         throw new Error('El servidor no devolvió una respuesta válida (JSON esperado).');
     }
-    return response.json();
+    return normalizeFamilyData(await response.json());
 };
 
 const apiFetch = (endpoint: string, options: RequestInit = {}) => {
@@ -288,7 +289,7 @@ export const importDescriptions = async (data: { ECN: string, Description: strin
     });
 };
 
-export const importSkuFamily = async (data: { Assembly: string, SKU: string, Family: string }[], fileName: string): Promise<any> => {
+export const importSkuFamily = async (data: ({ Assembly: string, SKU: string, Family: string } | { Product: string, SBU: string, SMD?: string })[], fileName: string): Promise<any> => {
     return apiFetch('/import/sku-family', {
         method: 'POST',
         body: JSON.stringify({ data, fileName }),
